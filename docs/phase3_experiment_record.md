@@ -27,7 +27,7 @@ Codex 云端不能访问本地 WSL 数据库。下文所有“实际结果”必
 
 随后用户完成只读回查：`coursework` 的 `TENANT_ID=1002`、`TENANT_TYPE=USER`、`COMPATIBILITY_MODE=MYSQL`、`STATUS=NORMAL`，查询返回 1 行，耗时 0.029 秒。资源绑定查询确认 `RESOURCE_POOL_ID=1001`、`RESOURCE_POOL_NAME=pool_coursework`、`UNIT_COUNT=1`、`ZONE_LIST=zone1`、`UNIT_CONFIG_NAME=unit_coursework`，返回 1 行，耗时 0.019 秒。
 
-因此租户状态和资源绑定已经验证成功。用户随后以空密码成功连接 `root@coursework`，再次确认 OceanBase 版本和 MySQL 兼容模式。当前尚未设置 root 密码，仍不得执行 `phone_recharge_db` 或 7 张业务表脚本。
+因此租户状态和资源绑定已经验证成功。用户随后以空密码成功连接 `root@coursework`，再次确认 OceanBase 版本和 MySQL 兼容模式。之后运行安全改密脚本成功，使用 `obclient -p` 重新连接验证通过。当前可以准备 Schema 初始化，但 `phone_recharge_db` 和 7 张表仍未创建。
 
 ### 3.1 普通租户准备状态
 
@@ -40,6 +40,7 @@ Codex 云端不能访问本地 WSL 数据库。下文所有“实际结果”必
 - `pool_coursework`：创建成功，绑定到 TENANT_ID 1002；
 - `coursework`：TENANT_ID 1002，USER / MYSQL / NORMAL；
 - `root@coursework`：空密码首次连接成功，账户、版本和兼容模式验证通过；
+- `root@coursework`：密码设置成功，`obclient -p` 重新连接验证通过；
 - `sql/00_create_coursework_tenant.sql` 仅保留为从零部署脚本，当前不得重复执行；
 - `phone_recharge_db` 和 7 张表尚未创建。
 
@@ -53,7 +54,11 @@ Codex 云端不能访问本地 WSL 数据库。下文所有“实际结果”必
 source /实际仓库路径/sql/00_check_tenant_resources.sql;
 ```
 
-真实结果已经返回并用于形成 `docs/tenant_resource_plan.md`。resource unit、resource pool、租户创建及绑定验证均已完成。`root@coursework` 无密码连接成功：`CURRENT_USER()=root@%`，查询耗时 0.003 秒；版本为 `5.7.25-OceanBase_CE-v5.0.1.0`，耗时 0.003 秒；兼容模式为 `MYSQL`，耗时 0.019 秒。当前下一小步是交互式设置 root 密码并使用 `-p` 重新连接验证。
+真实结果已经返回并用于形成 `docs/tenant_resource_plan.md`。resource unit、resource pool、租户创建及绑定验证均已完成。`root@coursework` 无密码连接成功：`CURRENT_USER()=root@%`，查询耗时 0.003 秒；版本为 `5.7.25-OceanBase_CE-v5.0.1.0`，耗时 0.003 秒；兼容模式为 `MYSQL`，耗时 0.019 秒。随后 `scripts/set_coursework_root_password.sh` 执行成功，密码未进入 Git 或截图，`obclient -p` 重新连接后再次得到相同账户、版本和兼容模式。
+
+### 3.4 Schema 自动化执行设计
+
+`scripts/run_phase3_schema_setup.sh` 是一次性初始化入口：交互读取一次密码，确认数据库不存在后，按顺序执行 5 个 SQL 文件，自动断言 7 表、7 主键、6 UNIQUE、18 CHECK、6 外键和 6 个 RESTRICT 规则。预期失败测试通过标记与 ERROR 配对识别，标记外错误会导致整体 FAIL。所有验证数据最终回滚，日志保存到 `results/phase3/`。
 
 ### 3.3 建库建表脚本静态复核
 
@@ -169,7 +174,7 @@ OceanBase CE 5.0.1.0 是否接受并实际执行全部 CHECK，必须以本地�
 - 租户资源检查结果：用户已提供，详见 3.1—3.2 节
 - resource unit / resource pool：unit_coursework / pool_coursework，绑定已验证
 - `root@coursework` 首次连接：空密码连接及只读验证成功
-- `root@coursework` 密码：尚未设置
+- `root@coursework` 密码：已设置，带 `-p` 重新连接验证成功；密码未记录
 - `SELECT VERSION()` 原始输出：待填写
 - 数据库创建结果：待验证
 - 7 张表创建结果：待验证
@@ -192,11 +197,9 @@ OceanBase CE 5.0.1.0 是否接受并实际执行全部 CHECK，必须以本地�
 | S02 | `CREATE TENANT coursework` 及 `Query OK, 0 rows affected (12.591 sec)` | 证明普通租户创建命令真实完成；放在“数据库物理设计—租户创建” | 已完成，待归档 |
 | S03 | coursework 类型、MYSQL 模式、NORMAL 状态和资源池归属 | 证明租户最终状态符合设计 | 已完成，待归档 |
 | S04 | `root@coursework` 无密码连接、`CURRENT_USER()`、版本和兼容模式 | 证明首次进入业务租户及 MySQL 模式，不显示密码 | 已完成，待归档 |
-| S05 | 设置密码后使用 `-p` 重新连接，并显示账户、版本和兼容模式 | 证明 root 密码保护和重新认证成功；不得截取密码输入或 ALTER USER | TODO |
-| S06 | `phone_recharge_db` 创建及字符集查询 | 证明业务数据库创建成功 | TODO |
-| S07 | 7 张业务表创建执行记录 | 展示数据库实施过程 | TODO |
-| S08 | `SHOW TABLES` 和表数量 7 | 证明表集合完整 | TODO |
-| S09 | 关键表 `SHOW CREATE TABLE` 与字段查询 | 展示物理结构和 CHECK | TODO |
-| S10 | 主键、UNIQUE、6 个外键及 RESTRICT 查询 | 证明完整性约束符合设计 | TODO |
+| S05 | 设置密码后使用 `-p` 重新连接，并显示账户、版本和兼容模式 | 证明 root 密码保护和重新认证成功；不得截取密码输入或 ALTER USER | 已完成，待归档 |
+| S06 | 自动化日志中的数据库创建、7 张表和结构计数 PASS 汇总 | 合并证明建库、建表和基本结构完整 | TODO |
+| S07 | `SHOW CREATE TABLE` 关键输出及 PK/UNIQUE/CHECK 统计 | 展示关键物理结构和完整性约束 | TODO |
+| S08 | UNIQUE/CHECK、外键/RESTRICT 预期失败分类及无残留 PASS 汇总 | 证明约束实际生效且测试事务已回滚 | TODO |
 
-用户已有的环境部署截图不要求重新生成；以上清单只记录课程报告仍需保留的数据库证据。
+原 S06—S10 合并为 S06—S08 三张信息完整的截图，避免重复截取相同表清单。用户已有的环境部署截图不要求重新生成。

@@ -42,38 +42,49 @@ INSERT INTO recharge_record (card_id, mobile_id, recharge_amount)
 VALUES (@p3_card_id_1, @p3_mobile_id, 50.00);
 
 -- U01：以下 6 条语句应分别被候选键对应的 UNIQUE 拒绝。
+SELECT 'EXPECT_FAIL|U01|duplicate login_name' AS expected_failure;
 INSERT INTO app_user (login_name, password_hash)
 VALUES ('__p3_user__', 'another_fake_hash');
 
+SELECT 'EXPECT_FAIL|U02|duplicate phone_number' AS expected_failure;
 INSERT INTO mobile_number (owner_id, phone_number)
 VALUES (@p3_owner_id, '+8613900000301');
 
+SELECT 'EXPECT_FAIL|U03|duplicate order_no' AS expected_failure;
 INSERT INTO purchase_order (user_id, order_no)
 VALUES (@p3_user_id, '__P3_ORDER__');
 
+SELECT 'EXPECT_FAIL|U04|duplicate order denomination' AS expected_failure;
 INSERT INTO order_item (order_id, denomination, quantity)
 VALUES (@p3_order_id, 50.00, 1);
 
+SELECT 'EXPECT_FAIL|U05|duplicate card_no' AS expected_failure;
 INSERT INTO recharge_card (item_id, card_no, password_hash, face_value)
 VALUES (@p3_item_id, '__P3_CARD_1__', 'another_fake_hash', 50.00);
 
+SELECT 'EXPECT_FAIL|U06|duplicate recharge card_id' AS expected_failure;
 INSERT INTO recharge_record (card_id, mobile_id, recharge_amount)
 VALUES (@p3_card_id_1, @p3_mobile_id, 50.00);
 
 -- C01：以下语句应分别被 CHECK 拒绝。
+SELECT 'EXPECT_FAIL|C01|invalid user status' AS expected_failure;
 INSERT INTO app_user (login_name, password_hash, user_status)
 VALUES ('__p3_bad_user__', 'fake_hash', 'UNKNOWN');
 
+SELECT 'EXPECT_FAIL|C02|negative order amount' AS expected_failure;
 INSERT INTO purchase_order (user_id, order_no, total_amount)
 VALUES (@p3_user_id, '__P3_NEGATIVE_ORDER__', -1.00);
 
+SELECT 'EXPECT_FAIL|C03|zero quantity' AS expected_failure;
 INSERT INTO order_item (order_id, denomination, quantity)
 VALUES (@p3_order_id, 100.00, 0);
 
+SELECT 'EXPECT_FAIL|C04|invalid card status' AS expected_failure;
 INSERT INTO recharge_card
     (item_id, card_no, password_hash, face_value, card_status)
 VALUES (@p3_item_id, '__P3_BAD_STATUS__', 'fake_hash', 50.00, 'INVALID');
 
+SELECT 'EXPECT_FAIL|C05|negative recharge amount' AS expected_failure;
 INSERT INTO recharge_record (card_id, mobile_id, recharge_amount)
 VALUES (@p3_card_id_2, @p3_mobile_id, -1.00);
 

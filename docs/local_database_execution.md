@@ -101,15 +101,15 @@ ob_compatibility_mode = MYSQL
 
 三条查询分别返回 1 行，耗时 0.003 秒、0.003 秒和 0.019 秒，随后正常退出。`root@%` 是当前租户内 root 账户的显示形式，本次连接已确认发生在 `coursework` 租户。
 
-下一小步使用仓库脚本交互式设置密码并自动重新连接验证。在仓库根目录只执行：
+用户已执行以下脚本：
 
 ```bash
 bash scripts/set_coursework_root_password.sh
 ```
 
-脚本会隐藏输入新密码两次，通过标准输入执行官方语法 `ALTER USER root IDENTIFIED BY '...'`，然后调用 `obclient -p`。此时再输入一次新密码，脚本会自动输出当前账户、版本和兼容模式。密码不会成为命令行参数，也不会写入仓库文件。
+脚本成功设置密码，并通过 `obclient -p` 重新连接；验证结果仍为 `root@%`、OceanBase CE 5.0.1.0 和 `MYSQL`。密码没有写入 Git 或截图。
 
-执行该脚本时不要录屏、不要开启 `script` 终端日志。若 `ALTER USER` 已成功但重新连接失败，不得重复运行整个脚本，应单独使用 `obclient ... -p` 排查。密码设置和重新连接实际验证成功后，才进入建库步骤。
+后续不再重复运行改密脚本。密码输入仍不得录屏或写入日志。
 
 ## 4. 进入项目目录
 
@@ -141,26 +141,31 @@ SHOW VARIABLES LIKE 'ob_compatibility_mode';
 
 只有兼容模式为 MySQL 时才继续。
 
-## 6. 按顺序执行 SQL
+## 6. 阶段 3 自动建库、建表和验证
 
-假设 `pwd` 输出 `/home/student/zuoye668936`，则执行：
+本项目使用一次性初始化脚本。它只适用于当前确认 `phone_recharge_db` 不存在的环境；若检测到数据库已经存在，会立即停止，不覆盖或清空数据。
 
-```sql
-source /home/student/zuoye668936/sql/00_create_database.sql;
-source /home/student/zuoye668936/sql/01_create_schema.sql;
-source /home/student/zuoye668936/sql/02_verify_schema.sql;
+```bash
+cd ~/zuoye668936
+git pull origin work
+bash scripts/run_phase3_schema_setup.sh
 ```
 
-把示例路径替换成自己的真实路径。前三个脚本不删除或清空数据。
+脚本只交互式读取一次 `root@coursework` 密码，然后自动执行仓库中的 5 个 SQL 文件。密码暂存在权限为 600 的 `/tmp` 客户端配置中，退出时自动删除；不会出现在命令参数、仓库或实验日志中。
 
-随后执行两个约束测试脚本：
+执行流程：
 
-```sql
-source /home/student/zuoye668936/sql/03_verify_constraints.sql;
-source /home/student/zuoye668936/sql/04_verify_foreign_keys.sql;
-```
+1. 验证账户、OceanBase 版本和 MYSQL 模式；
+2. 确认 `phone_recharge_db` 不存在，否则安全停止；
+3. 创建数据库和 7 张表；
+4. 输出完整 Schema 元数据；
+5. 断言表、主键、UNIQUE、CHECK、外键和 RESTRICT 数量；
+6. 运行 11 个 UNIQUE/CHECK 预期失败用例；
+7. 运行 12 个外键/RESTRICT 预期失败用例；
+8. 验证两个事务回滚后没有测试数据残留；
+9. 输出 PASS/FAIL 汇总并保存日志到 `results/phase3/`。
 
-这两个脚本故意插入非法数据，出现重复键、CHECK 或外键错误属于预期结果。成功插入的测试数据最终通过 `ROLLBACK` 撤销。若 obclient 遇到首个错误后停止，应在交互会话中逐段执行，确保最终执行 `ROLLBACK`。
+`03` 和 `04` 中的每个预期错误都有 `EXPECT_FAIL` 标记。辅助程序要求标记与数据库 ERROR 一一对应；无标记错误、缺少预期错误、数量不符或回滚残留都会判为 FAIL。测试数据只存在于阶段 3 验证事务中，不属于阶段 4 业务数据。
 
 ## 7. 检查结果
 
@@ -176,15 +181,7 @@ source /home/student/zuoye668936/sql/04_verify_foreign_keys.sql;
 
 ## 8. 保存实验结果
 
-可以在启动 obclient 前录制终端：
-
-```bash
-cd ~/zuoye668936
-mkdir -p results
-script -q -a results/phase3_execution.txt
-```
-
-执行完所有命令并退出 obclient 后，再输入一次 `exit` 结束录制。检查文本中没有密码后再保留。截图按照 `docs/phase3_experiment_record.md` 中的 S01—S10 保存。密码输入和 `ALTER USER` 语句不得截图。
+自动化脚本会生成主日志 `results/phase3/phase3_schema_setup_时间.txt`，以及两份预期失败分类日志。无需另行使用 `script` 录制终端。日志不包含密码；截图只截取非敏感的结构结果和最终汇总。
 
 ## 9. 错误信息收集
 
@@ -218,4 +215,4 @@ SHOW WARNINGS;
 
 ## 11. 后续自动化原则
 
-从建库开始，仓库将优先提供可重复执行的 SQL 文件和 Bash/Python 包装脚本，由用户执行一条入口命令并保存完整日志。约束测试会明确区分预期错误与真实故障；大数据、索引和并发实验会自动输出原始结果文件。每次仍按阶段拆分，不会把建库、建表、CRUD、性能和并发实验一次全部执行。
+从建库开始，仓库优先提供 SQL 文件和 Bash/Python 包装脚本，由用户执行一条入口命令并保存完整日志。当前 Schema 脚本是一次性初始化入口；后续 CRUD、大数据、索引和并发会使用各自独立入口，不会跨阶段一次执行。
