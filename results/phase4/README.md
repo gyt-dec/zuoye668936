@@ -6,5 +6,5 @@
 phase4_crud_YYYYMMDD_HHMMSS.txt
 ```
 
-原始日志由 `.gitignore` 排除，不直接提交。运行后应检查日志不含密码或其他敏感信息，再把日志文件名、关键计数和 PASS/FAIL 结果写入 `docs/phase4_experiment_record.md`。需要归档时可另存去敏副本，并明确标注其来源。
+本地真实执行日志为 `phase4_crud_20261108_031254.txt`，最终状态 PASS。原始日志由 `.gitignore` 排除，且尚未经过完整敏感信息复核，因此不直接提交。关键计数和 PASS 结果已写入 `docs/phase4_experiment_record.md`；需要归档时可另存去敏副本，并明确标注其来源。
 
