@@ -85,35 +85,31 @@ source /你的实际仓库路径/sql/00_verify_coursework_tenant.sql;
 
 实际租户查询返回一行：`TENANT_TYPE=USER`、`COMPATIBILITY_MODE=MYSQL`、`STATUS=NORMAL`；资源查询显示 `pool_coursework` 归属于该租户，并使用 `unit_coursework`。
 
-上述租户和资源绑定已经由本地真实查询验证通过。OceanBase 官方租户创建说明确认：新建 MySQL 租户的 `root` 初始密码为空。下一小步只进行首次连接和只读验证：
+上述租户和资源绑定已经由本地真实查询验证通过。OceanBase 官方租户创建说明确认：新建 MySQL 租户的 `root` 初始密码为空。用户已经完成首次无密码连接和只读验证：
 
 ```bash
 obclient -h127.0.0.1 -P2881 -uroot@coursework -A
 ```
 
-连接后只执行：
+实际结果为：
 
-```sql
-SELECT CURRENT_USER() AS current_account;
-SELECT VERSION() AS oceanbase_version;
-SHOW VARIABLES LIKE 'ob_compatibility_mode';
+```text
+current_account = root@%
+oceanbase_version = 5.7.25-OceanBase_CE-v5.0.1.0
+ob_compatibility_mode = MYSQL
 ```
 
-本小步执行完立即退出并返回结果，不运行建库脚本。预期账户属于 `root@coursework`，版本包含 OceanBase，兼容模式为 `MYSQL`。
+三条查询分别返回 1 行，耗时 0.003 秒、0.003 秒和 0.019 秒，随后正常退出。`root@%` 是当前租户内 root 账户的显示形式，本次连接已确认发生在 `coursework` 租户。
 
-首次连接验证成功后，下一小步才设置密码。正确 SQL 为：
-
-```sql
-ALTER USER root IDENTIFIED BY '<仅在本地输入的强密码>';
-```
-
-设置密码时不得录屏或记录终端日志；这里是占位符，不能照抄，也不能把真实密码提交仓库。完成后退出，并使用交互式密码提示重新连接：
+下一小步使用仓库脚本交互式设置密码并自动重新连接验证。在仓库根目录只执行：
 
 ```bash
-obclient -h127.0.0.1 -P2881 -uroot@coursework -p -A
+bash scripts/set_coursework_root_password.sh
 ```
 
-不要把密码直接写在 `-p密码` 后面。密码设置和重新连接也必须实际验证成功，之后才进入本文后面的建库步骤。
+脚本会隐藏输入新密码两次，通过标准输入执行官方语法 `ALTER USER root IDENTIFIED BY '...'`，然后调用 `obclient -p`。此时再输入一次新密码，脚本会自动输出当前账户、版本和兼容模式。密码不会成为命令行参数，也不会写入仓库文件。
+
+执行该脚本时不要录屏、不要开启 `script` 终端日志。若 `ALTER USER` 已成功但重新连接失败，不得重复运行整个脚本，应单独使用 `obclient ... -p` 排查。密码设置和重新连接实际验证成功后，才进入建库步骤。
 
 ## 4. 进入项目目录
 
@@ -188,7 +184,7 @@ mkdir -p results
 script -q -a results/phase3_execution.txt
 ```
 
-执行完所有命令并退出 obclient 后，再输入一次 `exit` 结束录制。检查文本中没有密码后再保留。截图按照 `docs/phase3_experiment_record.md` 中的 S01—S07 保存。
+执行完所有命令并退出 obclient 后，再输入一次 `exit` 结束录制。检查文本中没有密码后再保留。截图按照 `docs/phase3_experiment_record.md` 中的 S01—S10 保存。密码输入和 `ALTER USER` 语句不得截图。
 
 ## 9. 错误信息收集
 
@@ -219,3 +215,7 @@ SHOW WARNINGS;
 | 表已存在但结构不符 | `IF NOT EXISTS` 不会修复旧表；先保存结构并停止，不执行 DROP |
 
 本阶段没有任何 DROP、TRUNCATE 或自动清空脚本。
+
+## 11. 后续自动化原则
+
+从建库开始，仓库将优先提供可重复执行的 SQL 文件和 Bash/Python 包装脚本，由用户执行一条入口命令并保存完整日志。约束测试会明确区分预期错误与真实故障；大数据、索引和并发实验会自动输出原始结果文件。每次仍按阶段拆分，不会把建库、建表、CRUD、性能和并发实验一次全部执行。
