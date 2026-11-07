@@ -46,7 +46,7 @@ FROM oceanbase.DBA_OB_TENANTS
 ORDER BY TENANT_ID;
 ```
 
-初次资源检查时只有 `sys`。此后用户已真实成功创建 `unit_coursework`、`pool_coursework`，并执行 `CREATE TENANT coursework`，返回 `Query OK, 0 rows affected (12.591 sec)`。这证明创建语句完成，但尚未证明租户最终状态和资源池绑定正确。
+初次资源检查时只有 `sys`。此后用户已真实成功创建 `unit_coursework`、`pool_coursework`，并执行 `CREATE TENANT coursework`，返回 `Query OK, 0 rows affected (12.591 sec)`。后续回查已确认 `coursework` 为 USER / MYSQL / NORMAL，且正确绑定 `pool_coursework`、`unit_coursework` 和 `zone1`。
 
 `sys` 只用于管理，7 张业务表不得创建在 sys 租户。资源检查已经完成，历史检查脚本为：
 
@@ -77,33 +77,43 @@ source /你的实际仓库路径/sql/00_check_tenant_resources.sql;
 
 ### 3.2 创建后的验证和首次密码处理
 
-当前下一步只允许在 sys 租户执行只读验证：
+租户状态和资源绑定通过以下只读脚本完成验证：
 
 ```sql
 source /你的实际仓库路径/sql/00_verify_coursework_tenant.sql;
 ```
 
-预期租户查询是一行：`TENANT_TYPE=USER`、`COMPATIBILITY_MODE=MYSQL`、`STATUS=NORMAL`；资源查询应显示 `pool_coursework` 归属于该租户，并使用 `unit_coursework`。在真实结果返回前，不执行数据库或表创建脚本。
+实际租户查询返回一行：`TENANT_TYPE=USER`、`COMPATIBILITY_MODE=MYSQL`、`STATUS=NORMAL`；资源查询显示 `pool_coursework` 归属于该租户，并使用 `unit_coursework`。
 
-只有上述结果全部正确后，才尝试首次连接。该租户创建语句未设置密码，新租户 root 的初始密码通常为空，首次连接使用：
+上述租户和资源绑定已经由本地真实查询验证通过。OceanBase 官方租户创建说明确认：新建 MySQL 租户的 `root` 初始密码为空。下一小步只进行首次连接和只读验证：
 
 ```bash
 obclient -h127.0.0.1 -P2881 -uroot@coursework -A
 ```
 
-随后在未录屏、未开启终端日志时立即设置自己的强密码：
+连接后只执行：
+
+```sql
+SELECT CURRENT_USER() AS current_account;
+SELECT VERSION() AS oceanbase_version;
+SHOW VARIABLES LIKE 'ob_compatibility_mode';
+```
+
+本小步执行完立即退出并返回结果，不运行建库脚本。预期账户属于 `root@coursework`，版本包含 OceanBase，兼容模式为 `MYSQL`。
+
+首次连接验证成功后，下一小步才设置密码。正确 SQL 为：
 
 ```sql
 ALTER USER root IDENTIFIED BY '<仅在本地输入的强密码>';
 ```
 
-这里是占位符，不能照抄，也不能把真实密码提交仓库。退出后使用交互式密码提示重新连接：
+设置密码时不得录屏或记录终端日志；这里是占位符，不能照抄，也不能把真实密码提交仓库。完成后退出，并使用交互式密码提示重新连接：
 
 ```bash
 obclient -h127.0.0.1 -P2881 -uroot@coursework -p -A
 ```
 
-不要把密码直接写在 `-p密码` 后面。只有上述验证成功后，才进入本文后面的建库步骤。
+不要把密码直接写在 `-p密码` 后面。密码设置和重新连接也必须实际验证成功，之后才进入本文后面的建库步骤。
 
 ## 4. 进入项目目录
 

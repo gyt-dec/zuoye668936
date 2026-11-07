@@ -65,7 +65,7 @@
 2. `pool_coursework`；
 3. MySQL 模式租户 `coursework`。
 
-`sql/00_create_coursework_tenant.sql` 现在只作为从零部署的完整复现脚本，当前环境不得再次执行。文件不包含密码，也不创建 `phone_recharge_db` 或业务表。当前应改为运行只读的 `sql/00_verify_coursework_tenant.sql`。
+`sql/00_create_coursework_tenant.sql` 现在只作为从零部署的完整复现脚本，当前环境不得再次执行。文件不包含密码，也不创建 `phone_recharge_db` 或业务表。只读的 `sql/00_verify_coursework_tenant.sql` 已在本地执行，租户状态和资源绑定均验证成功。
 
 ## 7. 参考依据
 

@@ -14,9 +14,9 @@
 | 地址与端口 | 127.0.0.1:2881 | 用户已确认 |
 | 已验证账户 | root@sys | 用户已确认，仅用于系统管理 |
 | 初始租户 | 资源检查时只有 sys（SYS/MYSQL/NORMAL） | 用户已提供真实查询结果 |
-| resource unit | unit_coursework | 用户确认创建成功，配置回查待验证 |
-| resource pool | pool_coursework | 用户确认创建成功，归属待验证 |
-| 普通租户 | coursework | CREATE TENANT 成功，状态待验证 |
+| resource unit | unit_coursework | 已验证由 pool_coursework 使用 |
+| resource pool | pool_coursework，ID=1001，UNIT_COUNT=1，zone1 | 归属验证成功 |
+| 普通租户 | coursework，ID=1002，USER/MYSQL/NORMAL | 状态验证成功 |
 | 业务数据库 | phone_recharge_db | 待创建/验证 |
 
 Codex 云端不能访问本地 WSL 数据库。下文所有“实际结果”必须由用户运行后填写，当前不得写成成功。
@@ -25,7 +25,9 @@ Codex 云端不能访问本地 WSL 数据库。下文所有“实际结果”必
 
 用户真实执行 `SELECT VERSION()`，结果为 `5.7.25-OceanBase_CE-v5.0.1.0`。初次查询 `DBA_OB_TENANTS` 时只有 sys。随后用户成功创建 `unit_coursework` 和 `pool_coursework`，并真实执行 `CREATE TENANT coursework PRIMARY_ZONE='zone1', RESOURCE_POOL_LIST=('pool_coursework') SET ob_compatibility_mode='mysql'`，结果为 `Query OK, 0 rows affected (12.591 sec)`。
 
-该结果证明 CREATE TENANT 命令完成，但 `TENANT_TYPE`、`COMPATIBILITY_MODE`、`STATUS` 和资源池归属尚未回查，因此目前仍不得执行 `phone_recharge_db` 或 7 张业务表脚本。
+随后用户完成只读回查：`coursework` 的 `TENANT_ID=1002`、`TENANT_TYPE=USER`、`COMPATIBILITY_MODE=MYSQL`、`STATUS=NORMAL`，查询返回 1 行，耗时 0.029 秒。资源绑定查询确认 `RESOURCE_POOL_ID=1001`、`RESOURCE_POOL_NAME=pool_coursework`、`UNIT_COUNT=1`、`ZONE_LIST=zone1`、`UNIT_CONFIG_NAME=unit_coursework`，返回 1 行，耗时 0.019 秒。
+
+因此租户状态和资源绑定已经验证成功。当前尚未连接 `root@coursework`、尚未设置密码，仍不得执行 `phone_recharge_db` 或 7 张业务表脚本。
 
 ### 3.1 普通租户准备状态
 
@@ -34,9 +36,9 @@ Codex 云端不能访问本地 WSL 数据库。下文所有“实际结果”必
 - observer 地址为 127.0.0.1:2881；
 - 计划租户名为 `coursework`；
 - `sql/00_check_tenant_resources.sql` 已在本地成功执行；
-- `unit_coursework`：用户确认创建成功，配置回查待完成；
-- `pool_coursework`：用户确认创建成功，租户归属待完成；
-- `coursework`：CREATE TENANT 成功，状态待验证；
+- `unit_coursework`：创建并绑定成功；
+- `pool_coursework`：创建成功，绑定到 TENANT_ID 1002；
+- `coursework`：TENANT_ID 1002，USER / MYSQL / NORMAL；
 - `sql/00_create_coursework_tenant.sql` 仅保留为从零部署脚本，当前不得重复执行；
 - `phone_recharge_db` 和 7 张表尚未创建。
 
@@ -50,7 +52,19 @@ Codex 云端不能访问本地 WSL 数据库。下文所有“实际结果”必
 source /实际仓库路径/sql/00_check_tenant_resources.sql;
 ```
 
-真实结果已经返回并用于形成 `docs/tenant_resource_plan.md`。resource unit、resource pool 和租户的创建均已完成；当前只等待运行 `sql/00_verify_coursework_tenant.sql`，核对租户状态、兼容模式和资源池归属。
+真实结果已经返回并用于形成 `docs/tenant_resource_plan.md`。resource unit、resource pool、租户创建及绑定验证均已完成。当前下一小步是无密码首次连接 `root@coursework` 并只读验证身份、版本和兼容模式。
+
+### 3.3 建库建表脚本静态复核
+
+本阶段重新读取并检查了仓库中的 5 个实际文件：
+
+- `00_create_database.sql`：只创建 `phone_recharge_db`，使用 `utf8mb4/utf8mb4_bin`，无 DROP/TRUNCATE；尚未执行。
+- `01_create_schema.sql`：按依赖顺序创建 7 张表，含 7 个主键、6 个 UNIQUE、6 个 RESTRICT 外键和 18 个 CHECK；未建立普通性能索引；尚未执行。
+- `02_verify_schema.sql`：只读检查数据库、字段、表、约束和索引；尚未执行。
+- `03_verify_constraints.sql`：通过预期失败测试 UNIQUE/CHECK，最后 ROLLBACK；尚未执行。
+- `04_verify_foreign_keys.sql`：检查 6 个外键并用事务测试错误引用和 RESTRICT，最后 ROLLBACK；尚未执行。
+
+静态结构与设计基线一致。CHECK 元数据、外键行为、约束测试遇错后客户端是否继续等内容仍须在 OceanBase 5.0.1.0 中分步实测，不能把静态检查写成运行成功。
 
 ## 4. 物理设计说明
 
@@ -150,9 +164,9 @@ OceanBase CE 5.0.1.0 是否接受并实际执行全部 CHECK，必须以本地�
 
 - 执行日期：待填写
 - OBD 部署名称：待填写
-- 普通 MySQL 租户名称：coursework，CREATE TENANT 已成功，状态待验证
+- 普通 MySQL 租户名称：coursework，ID=1002，USER/MYSQL/NORMAL，已验证
 - 租户资源检查结果：用户已提供，详见 3.1—3.2 节
-- resource unit / resource pool：用户确认创建成功，元数据回查待完成
+- resource unit / resource pool：unit_coursework / pool_coursework，绑定已验证
 - `SELECT VERSION()` 原始输出：待填写
 - 数据库创建结果：待验证
 - 7 张表创建结果：待验证
@@ -173,7 +187,7 @@ OceanBase CE 5.0.1.0 是否接受并实际执行全部 CHECK，必须以本地�
 | --- | --- | --- | --- |
 | S01 | `SELECT VERSION()` 和兼容模式 | 证明使用 OceanBase CE 5.0.1.0 MySQL 模式 | TODO |
 | S02 | `CREATE TENANT coursework` 及 `Query OK, 0 rows affected (12.591 sec)` | 证明普通租户创建命令真实完成；放在“数据库物理设计—租户创建” | 已完成，待归档 |
-| S03 | coursework 类型、MYSQL 模式、NORMAL 状态和资源池归属 | 证明租户最终状态符合设计 | TODO |
+| S03 | coursework 类型、MYSQL 模式、NORMAL 状态和资源池归属 | 证明租户最终状态符合设计 | 已完成，待归档 |
 | S04 | `root@coursework` 连接、`CURRENT_USER()` 和兼容模式 | 证明业务环境连接成功，不显示密码 | TODO |
 | S05 | `phone_recharge_db` 创建及字符集查询 | 证明业务数据库创建成功 | TODO |
 | S06 | 7 张业务表创建执行记录 | 展示数据库实施过程 | TODO |
