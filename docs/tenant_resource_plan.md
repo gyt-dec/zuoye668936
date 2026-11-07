@@ -59,13 +59,13 @@
 
 ## 6. 创建与验证文件
 
-待用户确认后，以 `root@sys` 执行 `sql/00_create_coursework_tenant.sql`。该文件依次创建：
+用户已在本地成功创建以下对象：
 
 1. `unit_coursework`；
 2. `pool_coursework`；
 3. MySQL 模式租户 `coursework`。
 
-文件不包含密码，也不创建 `phone_recharge_db` 或业务表。创建后的只读验证语句位于同一文件末尾。
+`sql/00_create_coursework_tenant.sql` 现在只作为从零部署的完整复现脚本，当前环境不得再次执行。文件不包含密码，也不创建 `phone_recharge_db` 或业务表。当前应改为运行只读的 `sql/00_verify_coursework_tenant.sql`。
 
 ## 7. 参考依据
 

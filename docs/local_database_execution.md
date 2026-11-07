@@ -46,9 +46,9 @@ FROM oceanbase.DBA_OB_TENANTS
 ORDER BY TENANT_ID;
 ```
 
-本地真实结果已确认只有 `sys`：`TENANT_ID=1`、`TENANT_TYPE=SYS`、`COMPATIBILITY_MODE=MYSQL`、`STATUS=NORMAL`。这表示 OceanBase 服务正常，但还没有用于课程业务的普通租户。
+初次资源检查时只有 `sys`。此后用户已真实成功创建 `unit_coursework`、`pool_coursework`，并执行 `CREATE TENANT coursework`，返回 `Query OK, 0 rows affected (12.591 sec)`。这证明创建语句完成，但尚未证明租户最终状态和资源池绑定正确。
 
-`sys` 只用于管理。7 张业务表不得创建在 sys 租户。当前必须停止建库建表，先执行下面的资源检查：
+`sys` 只用于管理，7 张业务表不得创建在 sys 租户。资源检查已经完成，历史检查脚本为：
 
 ```sql
 source /你的实际仓库路径/sql/00_check_tenant_resources.sql;
@@ -56,7 +56,7 @@ source /你的实际仓库路径/sql/00_check_tenant_resources.sql;
 
 该脚本只读查询 zone、observer 容量、现有 resource unit、resource pool、unit 分配和资源参数。请返回完整输出，再确定 `coursework` 租户所需数值。WSL 总内存约 9.7 GiB 不能直接当作 observer 剩余可分配内存。
 
-### 3.1 coursework 租户的待定创建结构
+### 3.1 coursework 租户的资源与创建结构
 
 创建普通租户需要依次完成三步：
 
@@ -73,21 +73,19 @@ source /你的实际仓库路径/sql/00_check_tenant_resources.sql;
 - `UNIT_NUM=1`、`ZONE_LIST=('zone1')`；
 - `LOCALITY='F@zone1'`、`PRIMARY_ZONE='zone1'`。
 
-对应 SQL 已生成到 `sql/00_create_coursework_tenant.sql`，但尚未执行。必须等待用户确认后，才可在 `root@sys` 中执行；执行前应再次确认名称不存在且资源余量未明显变化。
+`sql/00_create_coursework_tenant.sql` 现在只作为从零部署的复现脚本。当前环境中的三个对象已经存在，不得再次执行该文件。
 
 ### 3.2 创建后的验证和首次密码处理
 
-租户创建完成后，必须在 sys 租户验证：
+当前下一步只允许在 sys 租户执行只读验证：
 
 ```sql
-SELECT TENANT_ID, TENANT_NAME, TENANT_TYPE, COMPATIBILITY_MODE, STATUS
-FROM oceanbase.DBA_OB_TENANTS
-WHERE TENANT_NAME = 'coursework';
+source /你的实际仓库路径/sql/00_verify_coursework_tenant.sql;
 ```
 
-预期是一行：`TENANT_TYPE=USER`、`COMPATIBILITY_MODE=MYSQL`、`STATUS=NORMAL`。在实际执行前，这只是预期结果。
+预期租户查询是一行：`TENANT_TYPE=USER`、`COMPATIBILITY_MODE=MYSQL`、`STATUS=NORMAL`；资源查询应显示 `pool_coursework` 归属于该租户，并使用 `unit_coursework`。在真实结果返回前，不执行数据库或表创建脚本。
 
-新租户 root 初始密码的具体行为需以 5.0.1.0 实际连接为准。若创建后 root 密码为空，首次连接使用：
+只有上述结果全部正确后，才尝试首次连接。该租户创建语句未设置密码，新租户 root 的初始密码通常为空，首次连接使用：
 
 ```bash
 obclient -h127.0.0.1 -P2881 -uroot@coursework -A
@@ -121,7 +119,7 @@ ls sql docs
 
 ## 5. 连接普通 MySQL 租户
 
-租户创建并验证后，本项目使用固定租户名 `coursework`：
+租户状态和资源池绑定验证通过，并完成首次密码设置后，本项目使用：
 
 ```bash
 obclient -h127.0.0.1 -P2881 -uroot@coursework -p -A

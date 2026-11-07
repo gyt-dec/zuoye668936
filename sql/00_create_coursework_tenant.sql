@@ -1,7 +1,8 @@
 -- 阶段 3：创建 coursework 普通 MySQL 租户
 -- 执行账户：root@sys；当前数据库：oceanbase。
--- 状态：仅生成，尚未在本地 OceanBase 执行。
--- 前提：已完成资源检查，并确认下列名称不存在、资源余量未发生明显变化。
+-- 用途：仅供“从零部署的新环境”参考和复现。
+-- 当前本地环境已经成功创建同名 unit、pool 和 tenant，严禁再次执行本文件。
+-- 在真正的全新环境中执行前，也必须确认下列名称不存在、资源余量满足方案。
 -- 本脚本不创建 phone_recharge_db、不创建业务表、不设置或保存任何密码。
 
 SELECT VERSION() AS oceanbase_version;
@@ -34,14 +35,12 @@ CREATE RESOURCE POOL pool_coursework
   UNIT_NUM = 1,
   ZONE_LIST = ('zone1');
 
--- 创建单副本 MySQL 兼容租户。只允许本机 127.0.0.1 直接连接 observer。
+-- 创建 MySQL 兼容租户。该最小语法已由用户在 OceanBase CE 5.0.1.0
+-- 本地环境真实执行成功；副本位置由 zone1 上的 pool_coursework 决定。
 CREATE TENANT coursework
-  LOCALITY = 'F@zone1',
   PRIMARY_ZONE = 'zone1',
-  RESOURCE_POOL_LIST = ('pool_coursework'),
-  CHARSET = 'utf8mb4'
-  SET ob_compatibility_mode = 'mysql',
-      ob_tcp_invited_nodes = '127.0.0.1';
+  RESOURCE_POOL_LIST = ('pool_coursework')
+  SET ob_compatibility_mode = 'mysql';
 
 -- 创建后验证：必须返回 USER / MYSQL / NORMAL。
 SELECT TENANT_ID,
