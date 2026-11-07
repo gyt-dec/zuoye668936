@@ -9,18 +9,41 @@
 | 项目 | 内容 | 证据状态 |
 | --- | --- | --- |
 | 宿主环境 | Windows + WSL2 | 用户已确认，部署截图已有 |
-| 数据库 | OceanBase CE 5.0.1.0 | 用户已确认，S01 待保存到本项目记录 |
+| 数据库 | OceanBase CE 5.0.1.0 | 用户已提供真实版本输出 |
 | 客户端 | obclient | 用户已确认可连接 |
 | 地址与端口 | 127.0.0.1:2881 | 用户已确认 |
 | 已验证账户 | root@sys | 用户已确认，仅用于系统管理 |
-| 普通 MySQL 租户 | 待填写 | 待验证 |
+| 当前租户 | 只有 sys（SYS/MYSQL/NORMAL） | 用户已提供真实查询结果 |
+| 计划普通 MySQL 租户 | coursework | 资源检查后再创建，当前不存在 |
 | 业务数据库 | phone_recharge_db | 待创建/验证 |
 
 Codex 云端不能访问本地 WSL 数据库。下文所有“实际结果”必须由用户运行后填写，当前不得写成成功。
 
 ## 3. 数据库版本与兼容模式
 
-用户报告版本为 OceanBase CE 5.0.1.0，已成功执行 `SELECT VERSION()`、`SELECT 1` 和 `SHOW DATABASES`。报告仍需保存 S01 的真实输出，并确认执行建表的普通租户为 MySQL 兼容模式。
+用户真实执行 `SELECT VERSION()`，结果为 `5.7.25-OceanBase_CE-v5.0.1.0`。`DBA_OB_TENANTS` 当前只有一行：sys 租户，类型 SYS，兼容模式 MYSQL，状态 NORMAL。因此数据库服务可用，但尚不具备隔离的普通业务租户，不能执行建库建表脚本。
+
+### 3.1 普通租户准备状态
+
+- WSL2 Ubuntu 22.04，总内存约 9.7 GiB；
+- OceanBase 为单节点 demo 集群；
+- observer 地址为 127.0.0.1:2881；
+- 计划租户名为 `coursework`；
+- `sql/00_check_tenant_resources.sql` 已准备；
+- resource unit、resource pool、tenant 尚未创建；
+- `phone_recharge_db` 和 7 张表尚未创建。
+
+约 9.7 GiB 是 WSL 总内存，不是 observer 可用租户内存。必须根据 `GV$OB_SERVERS` 的总量与已分配量、日志盘余量、真实 zone 和当前资源配置确定 unit 参数，当前不能填入猜测值。
+
+### 3.2 待执行的租户资源检查
+
+以 `root@sys` 执行：
+
+```sql
+source /实际仓库路径/sql/00_check_tenant_resources.sql;
+```
+
+需要保存并返回：`DBA_OB_ZONES`、`GV$OB_SERVERS`、`DBA_OB_UNIT_CONFIGS`、`DBA_OB_RESOURCE_POOLS`、`DBA_OB_UNITS` 以及资源相关参数的完整输出。取得这些数据后再编写实际的 resource unit、resource pool 和 `coursework` 创建 SQL。
 
 ## 4. 物理设计说明
 
@@ -120,7 +143,9 @@ OceanBase CE 5.0.1.0 是否接受并实际执行全部 CHECK，必须以本地�
 
 - 执行日期：待填写
 - OBD 部署名称：待填写
-- 普通 MySQL 租户名称：待填写
+- 普通 MySQL 租户名称：计划为 coursework，当前不存在
+- 租户资源检查结果：待填写
+- resource unit / resource pool 参数：待资源检查后确定
 - `SELECT VERSION()` 原始输出：待填写
 - 数据库创建结果：待验证
 - 7 张表创建结果：待验证

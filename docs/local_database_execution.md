@@ -46,7 +46,66 @@ FROM oceanbase.DBA_OB_TENANTS
 ORDER BY TENANT_ID;
 ```
 
-`sys` 是系统租户，只用于管理。必须找到 `TENANT_TYPE=USER`、`COMPATIBILITY_MODE=MYSQL` 且状态正常的普通租户，记下其名称。7 张业务表不得创建在 sys 租户。如果没有普通 MySQL 租户，停止建表并保存查询结果。
+本地真实结果已确认只有 `sys`：`TENANT_ID=1`、`TENANT_TYPE=SYS`、`COMPATIBILITY_MODE=MYSQL`、`STATUS=NORMAL`。这表示 OceanBase 服务正常，但还没有用于课程业务的普通租户。
+
+`sys` 只用于管理。7 张业务表不得创建在 sys 租户。当前必须停止建库建表，先执行下面的资源检查：
+
+```sql
+source /你的实际仓库路径/sql/00_check_tenant_resources.sql;
+```
+
+该脚本只读查询 zone、observer 容量、现有 resource unit、resource pool、unit 分配和资源参数。请返回完整输出，再确定 `coursework` 租户所需数值。WSL 总内存约 9.7 GiB 不能直接当作 observer 剩余可分配内存。
+
+### 3.1 coursework 租户的待定创建结构
+
+创建普通租户需要依次完成三步：
+
+1. 创建一个适合当前剩余资源的 resource unit 配置；
+2. 在真实 zone 上创建 `UNIT_NUM=1` 的 resource pool；
+3. 使用该 resource pool 创建 `coursework`，显式指定 MySQL 兼容模式和真实 primary zone。
+
+下列参数必须等待资源查询结果，当前不填写固定值：
+
+- resource unit 的 `MAX_CPU`、`MIN_CPU`；
+- `MEMORY_SIZE`；
+- `LOG_DISK_SIZE`；
+- `MAX_IOPS`、`MIN_IOPS`、`IOPS_WEIGHT`（需结合版本语法和现有 unit 配置）；
+- resource pool 的真实 `ZONE_LIST`；
+- tenant 的 `PRIMARY_ZONE` 和 locality/副本设置。
+
+在这些值确认以前，不执行 `CREATE RESOURCE UNIT`、`CREATE RESOURCE POOL` 或 `CREATE TENANT`。
+
+### 3.2 创建后的验证和首次密码处理
+
+租户创建完成后，必须在 sys 租户验证：
+
+```sql
+SELECT TENANT_ID, TENANT_NAME, TENANT_TYPE, COMPATIBILITY_MODE, STATUS
+FROM oceanbase.DBA_OB_TENANTS
+WHERE TENANT_NAME = 'coursework';
+```
+
+预期是一行：`TENANT_TYPE=USER`、`COMPATIBILITY_MODE=MYSQL`、`STATUS=NORMAL`。在实际执行前，这只是预期结果。
+
+新租户 root 初始密码的具体行为需以 5.0.1.0 实际连接为准。若创建后 root 密码为空，首次连接使用：
+
+```bash
+obclient -h127.0.0.1 -P2881 -uroot@coursework -A
+```
+
+随后在未录屏、未开启终端日志时立即设置自己的强密码：
+
+```sql
+ALTER USER root IDENTIFIED BY '<仅在本地输入的强密码>';
+```
+
+这里是占位符，不能照抄，也不能把真实密码提交仓库。退出后使用交互式密码提示重新连接：
+
+```bash
+obclient -h127.0.0.1 -P2881 -uroot@coursework -p -A
+```
+
+不要把密码直接写在 `-p密码` 后面。只有上述验证成功后，才进入本文后面的建库步骤。
 
 ## 4. 进入项目目录
 
@@ -62,10 +121,10 @@ ls sql docs
 
 ## 5. 连接普通 MySQL 租户
 
-将占位符替换成第 3 节查到的租户名：
+租户创建并验证后，本项目使用固定租户名 `coursework`：
 
 ```bash
-obclient -h127.0.0.1 -P2881 -uroot@<普通MySQL租户名> -p -A
+obclient -h127.0.0.1 -P2881 -uroot@coursework -p -A
 ```
 
 进入后再次检查：
