@@ -1,0 +1,7 @@
+# 本地数据库密码配置
+.env
+
+# 自动实验产生的原始日志留在本地；仓库只保存去敏摘要和实验记录。
+results/phase3/*.txt
+results/phase4/*.txt
+
