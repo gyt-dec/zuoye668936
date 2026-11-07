@@ -64,16 +64,16 @@ source /你的实际仓库路径/sql/00_check_tenant_resources.sql;
 2. 在真实 zone 上创建 `UNIT_NUM=1` 的 resource pool；
 3. 使用该 resource pool 创建 `coursework`，显式指定 MySQL 兼容模式和真实 primary zone。
 
-下列参数必须等待资源查询结果，当前不填写固定值：
+资源查询已经完成，最终建议值见 `docs/tenant_resource_plan.md`：
 
-- resource unit 的 `MAX_CPU`、`MIN_CPU`；
-- `MEMORY_SIZE`；
-- `LOG_DISK_SIZE`；
-- `MAX_IOPS`、`MIN_IOPS`、`IOPS_WEIGHT`（需结合版本语法和现有 unit 配置）；
-- resource pool 的真实 `ZONE_LIST`；
-- tenant 的 `PRIMARY_ZONE` 和 locality/副本设置。
+- `MAX_CPU=2`、`MIN_CPU=1`；
+- `MEMORY_SIZE=2G`；
+- `LOG_DISK_SIZE=4G`；
+- IOPS 参数不显式设置；
+- `UNIT_NUM=1`、`ZONE_LIST=('zone1')`；
+- `LOCALITY='F@zone1'`、`PRIMARY_ZONE='zone1'`。
 
-在这些值确认以前，不执行 `CREATE RESOURCE UNIT`、`CREATE RESOURCE POOL` 或 `CREATE TENANT`。
+对应 SQL 已生成到 `sql/00_create_coursework_tenant.sql`，但尚未执行。必须等待用户确认后，才可在 `root@sys` 中执行；执行前应再次确认名称不存在且资源余量未明显变化。
 
 ### 3.2 创建后的验证和首次密码处理
 

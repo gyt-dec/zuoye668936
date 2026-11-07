@@ -29,13 +29,14 @@ Codex 云端不能访问本地 WSL 数据库。下文所有“实际结果”必
 - OceanBase 为单节点 demo 集群；
 - observer 地址为 127.0.0.1:2881；
 - 计划租户名为 `coursework`；
-- `sql/00_check_tenant_resources.sql` 已准备；
+- `sql/00_check_tenant_resources.sql` 已在本地成功执行；
+- `sql/00_create_coursework_tenant.sql` 已生成但未执行；
 - resource unit、resource pool、tenant 尚未创建；
 - `phone_recharge_db` 和 7 张表尚未创建。
 
-约 9.7 GiB 是 WSL 总内存，不是 observer 可用租户内存。必须根据 `GV$OB_SERVERS` 的总量与已分配量、日志盘余量、真实 zone 和当前资源配置确定 unit 参数，当前不能填入猜测值。
+资源检查确认：observer 的租户内存容量为 5 GiB、已分配 1 GiB；CPU 容量 8、已分配 2；日志盘容量 14 GiB、已分配 2 GiB；数据盘容量 8 GiB、已分配约 2 GiB。真实 zone 为 `zone1`，最小完整 resource pool 内存为 1 GiB。
 
-### 3.2 待执行的租户资源检查
+### 3.2 资源检查结果与租户方案
 
 以 `root@sys` 执行：
 
@@ -43,7 +44,7 @@ Codex 云端不能访问本地 WSL 数据库。下文所有“实际结果”必
 source /实际仓库路径/sql/00_check_tenant_resources.sql;
 ```
 
-需要保存并返回：`DBA_OB_ZONES`、`GV$OB_SERVERS`、`DBA_OB_UNIT_CONFIGS`、`DBA_OB_RESOURCE_POOLS`、`DBA_OB_UNITS` 以及资源相关参数的完整输出。取得这些数据后再编写实际的 resource unit、resource pool 和 `coursework` 创建 SQL。
+真实结果已经返回并用于形成 `docs/tenant_resource_plan.md`。建议 unit 为 `MAX_CPU=2`、`MIN_CPU=1`、`MEMORY_SIZE=2G`、`LOG_DISK_SIZE=4G`；单节点 pool 使用 `UNIT_NUM=1` 和 `zone1`。当前没有执行 resource unit、resource pool 或 tenant 创建。
 
 ## 4. 物理设计说明
 
@@ -144,8 +145,8 @@ OceanBase CE 5.0.1.0 是否接受并实际执行全部 CHECK，必须以本地�
 - 执行日期：待填写
 - OBD 部署名称：待填写
 - 普通 MySQL 租户名称：计划为 coursework，当前不存在
-- 租户资源检查结果：待填写
-- resource unit / resource pool 参数：待资源检查后确定
+- 租户资源检查结果：用户已提供，详见 3.1—3.2 节
+- resource unit / resource pool 参数：已设计，尚未执行
 - `SELECT VERSION()` 原始输出：待填写
 - 数据库创建结果：待验证
 - 7 张表创建结果：待验证
