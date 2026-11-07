@@ -17,9 +17,9 @@
 | resource unit | unit_coursework | 已验证由 pool_coursework 使用 |
 | resource pool | pool_coursework，ID=1001，UNIT_COUNT=1，zone1 | 归属验证成功 |
 | 普通租户 | coursework，ID=1002，USER/MYSQL/NORMAL | 状态验证成功 |
-| 业务数据库 | phone_recharge_db | 待创建/验证 |
+| 业务数据库 | phone_recharge_db | 自动创建并验证成功 |
 
-Codex 云端不能访问本地 WSL 数据库。下文所有“实际结果”必须由用户运行后填写，当前不得写成成功。
+Codex 云端不能访问本地 WSL 数据库。本文件中的成功结果均来自用户返回的本地真实日志和截图摘要；未由本地执行证明的内容不得写成成功。
 
 ## 3. 数据库版本与兼容模式
 
@@ -27,14 +27,14 @@ Codex 云端不能访问本地 WSL 数据库。下文所有“实际结果”必
 
 随后用户完成只读回查：`coursework` 的 `TENANT_ID=1002`、`TENANT_TYPE=USER`、`COMPATIBILITY_MODE=MYSQL`、`STATUS=NORMAL`，查询返回 1 行，耗时 0.029 秒。资源绑定查询确认 `RESOURCE_POOL_ID=1001`、`RESOURCE_POOL_NAME=pool_coursework`、`UNIT_COUNT=1`、`ZONE_LIST=zone1`、`UNIT_CONFIG_NAME=unit_coursework`，返回 1 行，耗时 0.019 秒。
 
-因此租户状态和资源绑定已经验证成功。用户随后以空密码成功连接 `root@coursework`，再次确认 OceanBase 版本和 MySQL 兼容模式。之后运行安全改密脚本成功，使用 `obclient -p` 重新连接验证通过。当前可以准备 Schema 初始化，但 `phone_recharge_db` 和 7 张表仍未创建。
+因此租户状态和资源绑定已经验证成功。用户随后以空密码成功连接 `root@coursework`，再次确认 OceanBase 版本和 MySQL 兼容模式。之后运行安全改密脚本成功，使用 `obclient -p` 重新连接验证通过。最后运行阶段 3 自动化脚本，数据库、7 张表及全部设计约束验证均为 PASS。
 
 ### 3.1 普通租户准备状态
 
 - WSL2 Ubuntu 22.04，总内存约 9.7 GiB；
 - OceanBase 为单节点 demo 集群；
 - observer 地址为 127.0.0.1:2881；
-- 计划租户名为 `coursework`；
+- 普通租户名为 `coursework`；
 - `sql/00_check_tenant_resources.sql` 已在本地成功执行；
 - `unit_coursework`：创建并绑定成功；
 - `pool_coursework`：创建成功，绑定到 TENANT_ID 1002；
@@ -42,7 +42,7 @@ Codex 云端不能访问本地 WSL 数据库。下文所有“实际结果”必
 - `root@coursework`：空密码首次连接成功，账户、版本和兼容模式验证通过；
 - `root@coursework`：密码设置成功，`obclient -p` 重新连接验证通过；
 - `sql/00_create_coursework_tenant.sql` 仅保留为从零部署脚本，当前不得重复执行；
-- `phone_recharge_db` 和 7 张表尚未创建。
+- `phone_recharge_db` 和 7 张表：创建及验证成功。
 
 资源检查确认：observer 的租户内存容量为 5 GiB、已分配 1 GiB；CPU 容量 8、已分配 2；日志盘容量 14 GiB、已分配 2 GiB；数据盘容量 8 GiB、已分配约 2 GiB。真实 zone 为 `zone1`，最小完整 resource pool 内存为 1 GiB。
 
@@ -56,21 +56,38 @@ source /实际仓库路径/sql/00_check_tenant_resources.sql;
 
 真实结果已经返回并用于形成 `docs/tenant_resource_plan.md`。resource unit、resource pool、租户创建及绑定验证均已完成。`root@coursework` 无密码连接成功：`CURRENT_USER()=root@%`，查询耗时 0.003 秒；版本为 `5.7.25-OceanBase_CE-v5.0.1.0`，耗时 0.003 秒；兼容模式为 `MYSQL`，耗时 0.019 秒。随后 `scripts/set_coursework_root_password.sh` 执行成功，密码未进入 Git 或截图，`obclient -p` 重新连接后再次得到相同账户、版本和兼容模式。
 
-### 3.4 Schema 自动化执行设计
+### 3.3 Schema 自动化执行设计
 
 `scripts/run_phase3_schema_setup.sh` 是一次性初始化入口：交互读取一次密码，确认数据库不存在后，按顺序执行 5 个 SQL 文件，自动断言 7 表、7 主键、6 UNIQUE、18 CHECK、6 外键和 6 个 RESTRICT 规则。预期失败测试通过标记与 ERROR 配对识别，标记外错误会导致整体 FAIL。所有验证数据最终回滚，日志保存到 `results/phase3/`。
 
-### 3.3 建库建表脚本静态复核
+### 3.4 Schema 自动化真实结果
+
+用户在本地实际运行 `scripts/run_phase3_schema_setup.sh`，最终状态为 PASS：
+
+- `phone_recharge_db` 创建成功；
+- 7 张业务表创建成功；
+- 7 PK / 6 UNIQUE / 18 CHECK 验证成功；
+- 6 FK 的 `UPDATE_RULE`、`DELETE_RULE` 均为 RESTRICT；
+- 11 个 UNIQUE/CHECK 预期失败全部正确识别；
+- 12 个 FK/RESTRICT 预期失败全部正确识别；
+- ERROR 1452 表示子记录引用不存在的父记录，属于预期拒绝；
+- ERROR 1451 表示 RESTRICT 阻止删除被引用父记录，属于预期拒绝；
+- 两个事务测试均无残留数据，`user_rows=0`、`order_rows=0`、`card_rows=0`；
+- 最终输出为 `最终状态：PASS`。
+
+真实日志文件名为 `phase3_schema_setup_20261108_024830.txt`，保存在本地仓库的 `results/phase3/`。Git 中保存经确认的摘要；原始日志未经云端完整敏感信息检查，暂不直接提交。
+
+### 3.5 建库建表脚本与实际执行复核
 
 本阶段重新读取并检查了仓库中的 5 个实际文件：
 
-- `00_create_database.sql`：只创建 `phone_recharge_db`，使用 `utf8mb4/utf8mb4_bin`，无 DROP/TRUNCATE；尚未执行。
-- `01_create_schema.sql`：按依赖顺序创建 7 张表，含 7 个主键、6 个 UNIQUE、6 个 RESTRICT 外键和 18 个 CHECK；未建立普通性能索引；尚未执行。
-- `02_verify_schema.sql`：只读检查数据库、字段、表、约束和索引；尚未执行。
-- `03_verify_constraints.sql`：通过预期失败测试 UNIQUE/CHECK，最后 ROLLBACK；尚未执行。
-- `04_verify_foreign_keys.sql`：检查 6 个外键并用事务测试错误引用和 RESTRICT，最后 ROLLBACK；尚未执行。
+- `00_create_database.sql`：创建 `phone_recharge_db`，使用 `utf8mb4/utf8mb4_bin`，无 DROP/TRUNCATE；执行成功。
+- `01_create_schema.sql`：按依赖顺序创建 7 张表，含 7 个主键、6 个 UNIQUE、6 个 RESTRICT 外键和 18 个 CHECK；未建立普通性能索引；执行成功。
+- `02_verify_schema.sql`：只读检查数据库、字段、表、约束和索引；执行成功。
+- `03_verify_constraints.sql`：通过预期失败测试 UNIQUE/CHECK，最后 ROLLBACK；执行和自动分类成功。
+- `04_verify_foreign_keys.sql`：检查 6 个外键并用事务测试错误引用和 RESTRICT，最后 ROLLBACK；执行和自动分类成功。
 
-静态结构与设计基线一致。CHECK 元数据、外键行为、约束测试遇错后客户端是否继续等内容仍须在 OceanBase 5.0.1.0 中分步实测，不能把静态检查写成运行成功。
+静态结构与设计基线一致，随后已在 OceanBase CE 5.0.1.0 中完成真实执行。CHECK、UNIQUE、外键和 RESTRICT 行为均由自动化用例验证，最终无测试数据残留。
 
 ## 4. 物理设计说明
 
@@ -80,21 +97,21 @@ source /实际仓库路径/sql/00_check_tenant_resources.sql;
 
 ### 4.1 OceanBase CE 5.0.1.0 兼容性核查
 
-下表是基于 OceanBase MySQL 模式语法和官方资料所做的静态核查，不等于已在用户本地执行成功。
+下表结合官方语法核查与本地 OceanBase CE 5.0.1.0 真实执行结果。
 
 | 能力 | 静态核查结论 | 本地验证方法或兼容方案 |
 | --- | --- | --- |
-| BIGINT UNSIGNED | MySQL 模式支持方向明确，适合非负代理 ID | 通过 `information_schema.COLUMNS.COLUMN_TYPE` 核对 |
-| DECIMAL | 支持定点数，适合金额，避免 FLOAT/DOUBLE 误差 | 插入边界金额并核对精度；本阶段只验证结构 |
-| DATETIME(6) | MySQL 模式支持带小数秒的时间设计 | 核对 `SHOW CREATE TABLE` 和默认时间；若默认表达式报错，保存原错后改为程序赋值 |
-| VARCHAR | 支持，手机号、卡号和订单号按字符串保存 | 核对长度、字符集和排序规则 |
-| CHECK | 官方 MySQL 模式提供 CHECK 能力，但具体 5.0.1.0 的创建和执行必须实测 | 运行 `03_verify_constraints.sql`；若版本行为有差异，保留错误并在后续用事务、触发器或程序校验补充，不删除业务规则 |
-| AUTO_INCREMENT | MySQL 模式支持自增列 | 插入测试行并检查 `LAST_INSERT_ID()`；回滚后编号可能不连续 |
-| 外键 | MySQL 模式支持外键；本设计使用 RESTRICT 防止级联误删 | 运行 `04_verify_foreign_keys.sql` 核对元数据和失败行为 |
-| UNIQUE | 支持唯一约束，用于 6 个其他候选键 | 运行 6 个重复键用例 |
-| utf8mb4 / utf8mb4_bin | MySQL 模式使用该字符集和二进制排序规则的设计合理 | 在 `information_schema.SCHEMATA/COLUMNS` 中核对；若本地无该排序规则，先保存 `SHOW COLLATION` 输出再选择该版本实际提供的 utf8mb4 二进制排序规则 |
+| BIGINT UNSIGNED | 7 个代理主键创建成功 | PASS |
+| DECIMAL | 订单、面额和充值金额字段创建成功 | PASS |
+| DATETIME(6) | 时间字段及默认表达式创建成功 | PASS |
+| VARCHAR | 手机号、卡号、订单号和状态字段创建成功 | PASS |
+| CHECK | 18 个 CHECK 创建成功，5 个非法值用例被拒绝 | PASS |
+| AUTO_INCREMENT | 7 个代理主键自增定义创建成功，测试事务可取得 ID | PASS |
+| 外键 | 6 个外键创建成功，ERROR 1451/1452 行为符合设计 | PASS |
+| UNIQUE | 6 个候选键唯一约束创建成功，重复值被拒绝 | PASS |
+| utf8mb4 / utf8mb4_bin | 数据库和字符列按设计创建 | PASS |
 
-兼容性结论目前为“SQL 已按 OceanBase MySQL 模式准备，真实 5.0.1.0 结果待本地验证”。不得把普通 MySQL 的执行结果作为替代证据。
+兼容性结论：本阶段所用字段类型、字符集、默认值、主键、UNIQUE、CHECK 和外键语法已在 OceanBase CE 5.0.1.0 MySQL 模式真实执行通过。
 
 ## 5. 建库 SQL
 
@@ -130,32 +147,32 @@ CREATE DATABASE IF NOT EXISTS phone_recharge_db
 | recharge_card | card_id | card_no | PK + UNIQUE |
 | recharge_record | recharge_id | card_id | PK + UNIQUE |
 
-预期数量：7 个主键、6 个 UNIQUE。实际数量：待填写。`03_verify_constraints.sql` 中的 6 个重复键用例实际结果：待验证。
+实际验证得到 7 个主键、6 个 UNIQUE；`03_verify_constraints.sql` 中 6 个重复键用例均被正确拒绝。
 
 ## 8. 外键验证
 
 | 子表字段 | 引用目标 | 删除/更新规则 | 实际结果 |
 | --- | --- | --- | --- |
-| mobile_number.owner_id | owner.owner_id | RESTRICT / RESTRICT | 待验证 |
-| purchase_order.user_id | app_user.user_id | RESTRICT / RESTRICT | 待验证 |
-| order_item.order_id | purchase_order.order_id | RESTRICT / RESTRICT | 待验证 |
-| recharge_card.item_id | order_item.item_id | RESTRICT / RESTRICT | 待验证 |
-| recharge_record.card_id | recharge_card.card_id | RESTRICT / RESTRICT | 待验证 |
-| recharge_record.mobile_id | mobile_number.mobile_id | RESTRICT / RESTRICT | 待验证 |
+| mobile_number.owner_id | owner.owner_id | RESTRICT / RESTRICT | PASS |
+| purchase_order.user_id | app_user.user_id | RESTRICT / RESTRICT | PASS |
+| order_item.order_id | purchase_order.order_id | RESTRICT / RESTRICT | PASS |
+| recharge_card.item_id | order_item.item_id | RESTRICT / RESTRICT | PASS |
+| recharge_record.card_id | recharge_card.card_id | RESTRICT / RESTRICT | PASS |
+| recharge_record.mobile_id | mobile_number.mobile_id | RESTRICT / RESTRICT | PASS |
 
-`04_verify_foreign_keys.sql` 同时检查元数据、无父记录插入失败和被引用父记录删除失败。实际错误代码与结果：待填写。
+`04_verify_foreign_keys.sql` 同时检查元数据、无父记录插入失败和被引用父记录删除失败。实际 ERROR 1452、1451 均按预期出现并被自动分类，最终回滚无残留。
 
 ## 9. 唯一约束验证
 
 预期：重复登录名、手机号、订单号、同订单同面额、卡号和同一卡第二条充值记录均被拒绝。其中 `recharge_record.card_id` 唯一约束在数据库层保证一卡最多一条成功充值记录。
 
-实际结果：待验证。
+实际结果：PASS。6 个重复候选键用例均被拒绝，一卡第二条充值记录未能插入。
 
 ## 10. CHECK 约束验证
 
 建表脚本声明 18 个 CHECK，覆盖非空字符串、状态取值、非负订单金额、正数面额和数量、卡状态与使用时间一致等规则。`03_verify_constraints.sql` 提供非法状态、负金额、零数量等代表性失败用例。
 
-OceanBase CE 5.0.1.0 是否接受并实际执行全部 CHECK，必须以本地运行结果为准。实际结果：待验证。
+OceanBase CE 5.0.1.0 已实际创建并报告 18 个 CHECK；5 个代表性非法值用例均被拒绝。实际结果：PASS。
 
 ## 11. 预期结果
 
@@ -168,38 +185,37 @@ OceanBase CE 5.0.1.0 是否接受并实际执行全部 CHECK，必须以本地�
 
 ## 12. 实际结果填写区
 
-- 执行日期：待填写
-- OBD 部署名称：待填写
+- 执行日期：2026-11-08
+- OBD 部署名称：本次结果未记录具体部署名，不影响数据库内版本和租户证据
 - 普通 MySQL 租户名称：coursework，ID=1002，USER/MYSQL/NORMAL，已验证
 - 租户资源检查结果：用户已提供，详见 3.1—3.2 节
 - resource unit / resource pool：unit_coursework / pool_coursework，绑定已验证
 - `root@coursework` 首次连接：空密码连接及只读验证成功
 - `root@coursework` 密码：已设置，带 `-p` 重新连接验证成功；密码未记录
-- `SELECT VERSION()` 原始输出：待填写
-- 数据库创建结果：待验证
-- 7 张表创建结果：待验证
-- 主键/UNIQUE 统计：待验证
-- 外键统计和行为：待验证
-- CHECK 统计和行为：待验证
-- 回滚后计数：待验证
-- 原始日志：待填写
-- 发生的错误及修复：待填写
+- `SELECT VERSION()`：`5.7.25-OceanBase_CE-v5.0.1.0`
+- 数据库创建结果：PASS
+- 7 张表创建结果：PASS
+- 主键/UNIQUE 统计：7 / 6，PASS
+- 外键统计和行为：6，全部 RESTRICT，PASS
+- CHECK 统计和行为：18，代表性非法值均被拒绝，PASS
+- 回滚后计数：两组均为 0，PASS
+- 原始日志：`phase3_schema_setup_20261108_024830.txt`（本地保存）
+- 发生的错误及修复：ERROR 1451/1452 为设计中的预期失败，不属于实验故障
 
-## 13. 实验分析填写提示
+## 13. 实验分析
 
-实际执行后应分析：物理类型是否与业务语义一致；CHECK 是否由 5.0.1.0 实际执行；RESTRICT 是否避免历史数据误删；唯一约束是否阻止一卡多次记录；约束产生的索引与后续性能索引有何区别。没有运行证据时不能填写“全部通过”。
+真实结果表明物理类型和完整性约束能够在 OceanBase CE 5.0.1.0 MySQL 模式中执行。UNIQUE 阻止重复业务键和一卡多记录，CHECK 拒绝非法状态与金额，外键拒绝孤儿记录，RESTRICT 防止误删历史父记录。主键和候选键形成的约束索引属于当前结构的一部分，后续性能实验不会把它们误写为新增普通索引。
 
 ## 14. 截图清单
 
 | 编号 | 截图内容 | 报告用途 | 状态 |
 | --- | --- | --- | --- |
-| S01 | `SELECT VERSION()` 和兼容模式 | 证明使用 OceanBase CE 5.0.1.0 MySQL 模式 | TODO |
+| S01 | `SELECT VERSION()` 和兼容模式 | 证明使用 OceanBase CE 5.0.1.0 MySQL 模式 | 已有环境证据，无需重截 |
 | S02 | `CREATE TENANT coursework` 及 `Query OK, 0 rows affected (12.591 sec)` | 证明普通租户创建命令真实完成；放在“数据库物理设计—租户创建” | 已完成，待归档 |
 | S03 | coursework 类型、MYSQL 模式、NORMAL 状态和资源池归属 | 证明租户最终状态符合设计 | 已完成，待归档 |
 | S04 | `root@coursework` 无密码连接、`CURRENT_USER()`、版本和兼容模式 | 证明首次进入业务租户及 MySQL 模式，不显示密码 | 已完成，待归档 |
 | S05 | 设置密码后使用 `-p` 重新连接，并显示账户、版本和兼容模式 | 证明 root 密码保护和重新认证成功；不得截取密码输入或 ALTER USER | 已完成，待归档 |
-| S06 | 自动化日志中的数据库创建、7 张表和结构计数 PASS 汇总 | 合并证明建库、建表和基本结构完整 | TODO |
-| S07 | `SHOW CREATE TABLE` 关键输出及 PK/UNIQUE/CHECK 统计 | 展示关键物理结构和完整性约束 | TODO |
-| S08 | UNIQUE/CHECK、外键/RESTRICT 预期失败分类及无残留 PASS 汇总 | 证明约束实际生效且测试事务已回滚 | TODO |
+| S06 | 阶段 3 最终 PASS 汇总、FK/RESTRICT 预期失败分类及回滚为 0 | 合并证明建库建表、约束行为和最终状态 | 已完成，待归档 |
+| S07 | 关键表实际定义，建议 `SHOW CREATE TABLE recharge_record`，清楚显示 PK、UNIQUE、FK 和 CHECK | 用一张图补充物理结构的数据库原始证据 | 建议补截 1 张 |
 
-原 S06—S10 合并为 S06—S08 三张信息完整的截图，避免重复截取相同表清单。用户已有的环境部署截图不要求重新生成。
+现有 S06 已覆盖最终 PASS、外键预期失败和回滚无残留。最少只需再补 S07 一张关键表实际定义；若最终报告直接采用清晰的日志片段且版面足够，可由教师报告排版时决定是否保留 S07，不再要求无意义的 S08—S10。

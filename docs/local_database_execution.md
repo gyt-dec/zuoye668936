@@ -143,7 +143,7 @@ SHOW VARIABLES LIKE 'ob_compatibility_mode';
 
 ## 6. 阶段 3 自动建库、建表和验证
 
-本项目使用一次性初始化脚本。它只适用于当前确认 `phone_recharge_db` 不存在的环境；若检测到数据库已经存在，会立即停止，不覆盖或清空数据。
+本项目使用一次性初始化脚本。用户已在本地成功执行，`phone_recharge_db` 和 7 张表均已创建。该脚本检测到数据库已经存在时会立即停止，因此当前不得重复运行。
 
 ```bash
 cd ~/zuoye668936
@@ -151,7 +151,7 @@ git pull origin work
 bash scripts/run_phase3_schema_setup.sh
 ```
 
-脚本只交互式读取一次 `root@coursework` 密码，然后自动执行仓库中的 5 个 SQL 文件。密码暂存在权限为 600 的 `/tmp` 客户端配置中，退出时自动删除；不会出现在命令参数、仓库或实验日志中。
+实际运行中，脚本交互式读取一次 `root@coursework` 密码，然后自动执行仓库中的 5 个 SQL 文件。密码未出现在命令参数、仓库、日志或截图中。
 
 执行流程：
 
@@ -167,6 +167,8 @@ bash scripts/run_phase3_schema_setup.sh
 
 `03` 和 `04` 中的每个预期错误都有 `EXPECT_FAIL` 标记。辅助程序要求标记与数据库 ERROR 一一对应；无标记错误、缺少预期错误、数量不符或回滚残留都会判为 FAIL。测试数据只存在于阶段 3 验证事务中，不属于阶段 4 业务数据。
 
+本地最终结果为 PASS：数据库和 7 张表创建成功，7 PK / 6 UNIQUE / 18 CHECK / 6 RESTRICT 外键全部验证通过，11 个 UNIQUE/CHECK 与 12 个 FK/RESTRICT 预期失败正确分类，两组回滚均无残留。ERROR 1451、1452 是预期约束拒绝，不是脚本故障。
+
 ## 7. 检查结果
 
 `02_verify_schema.sql` 的主要预期结果：
@@ -181,7 +183,7 @@ bash scripts/run_phase3_schema_setup.sh
 
 ## 8. 保存实验结果
 
-自动化脚本会生成主日志 `results/phase3/phase3_schema_setup_时间.txt`，以及两份预期失败分类日志。无需另行使用 `script` 录制终端。日志不包含密码；截图只截取非敏感的结构结果和最终汇总。
+自动化脚本生成的真实主日志为 `results/phase3/phase3_schema_setup_20261108_024830.txt`。原始日志保留在用户本地；Git 仅提交经确认的结果摘要，除非用户完成敏感信息复核。截图只截取非敏感的结构结果和最终汇总。
 
 ## 9. 错误信息收集
 
@@ -211,7 +213,7 @@ SHOW WARNINGS;
 | 约束测试出现错误 | 先判断是否为脚本注明的预期失败，再确认最终已回滚 |
 | 表已存在但结构不符 | `IF NOT EXISTS` 不会修复旧表；先保存结构并停止，不执行 DROP |
 
-本阶段没有任何 DROP、TRUNCATE 或自动清空脚本。
+本阶段没有执行任何 DROP、TRUNCATE 或自动清空操作。阶段 3 状态：完成。
 
 ## 11. 后续自动化原则
 
