@@ -5,4 +5,4 @@
 - `phase5_views_triggers_YYYYMMDD_HHMMSS.txt`：完整主日志；
 - `phase5_trigger_tests_YYYYMMDD_HHMMSS.txt`：触发器测试及预期失败日志。
 
-原始日志由 `.gitignore` 排除，不直接提交。阶段 5 尚未本地执行；运行后需先检查日志不含密码或敏感信息，再把真实结果和日志文件名写入实验记录。
+首次本地真实主日志为 `phase5_views_triggers_20261108_032918.txt`。数据库对象和触发器测试主体成功，P5数据回滚为0，但旧解析器误判重复标记，最终状态为FAIL。原始日志由 `.gitignore` 排除，不直接提交；修复后的恢复验证尚未执行。

@@ -67,7 +67,7 @@ done
 command -v obclient >/dev/null 2>&1 || fail "未找到 obclient"
 command -v python3 >/dev/null 2>&1 || fail "未找到 python3"
 
-echo "阶段 5 将创建 2 个视图和 2 个触发器，并在事务中测试后回滚 P5 数据。"
+echo "阶段 5 将创建或严格复用 2 个视图和 2 个触发器，并在事务中测试后回滚 P5 数据。"
 echo "脚本不会 DROP/TRUNCATE 业务表、不会关闭外键，也不会修改阶段 4 数据。"
 read -r -s -p "请输入 root@coursework 密码：" coursework_password
 printf '\n'
@@ -121,9 +121,15 @@ assert_equals "执行前P5标记数据总数" "0" "${existing_p5}"
 existing_objects="$(query_scalar "SELECT
  (SELECT COUNT(*) FROM information_schema.VIEWS WHERE TABLE_SCHEMA='phone_recharge_db' AND TABLE_NAME IN ('v_user_card_purchase_detail','v_mobile_recharge_history'))+
  (SELECT COUNT(*) FROM information_schema.TRIGGERS WHERE TRIGGER_SCHEMA='phone_recharge_db' AND TRIGGER_NAME IN ('trg_recharge_record_validate','trg_recharge_record_mark_card_used'));")"
-assert_equals "执行前阶段5对象数量" "0" "${existing_objects}"
-
-run_sql_file "创建两个视图" "${SQL_DIR}/20_create_phase5_views.sql"
+if [[ "${existing_objects}" == "0" ]]; then
+    echo "PASS：执行前无阶段5对象，将执行首次创建"
+    run_sql_file "创建两个视图" "${SQL_DIR}/20_create_phase5_views.sql"
+    run_sql_file "创建两个触发器" "${SQL_DIR}/21_create_phase5_triggers.sql"
+elif [[ "${existing_objects}" == "4" ]]; then
+    echo "PASS：检测到4个阶段5对象，进入恢复验证模式，不重复创建或删除对象"
+else
+    fail "阶段5对象处于部分创建状态：expected=0或4, actual=${existing_objects}"
+fi
 
 view_count="$(query_scalar "SELECT COUNT(*) FROM information_schema.VIEWS WHERE TABLE_SCHEMA='phone_recharge_db' AND TABLE_NAME IN ('v_user_card_purchase_detail','v_mobile_recharge_history');")"
 view_columns="$(query_scalar "SELECT CONCAT(
@@ -132,25 +138,36 @@ view_columns="$(query_scalar "SELECT CONCAT(
 view_rows="$(query_scalar "SELECT CONCAT(
  (SELECT COUNT(*) FROM phone_recharge_db.v_user_card_purchase_detail WHERE card_no LIKE 'P4-CARD-%'),',',
  (SELECT COUNT(*) FROM phone_recharge_db.v_mobile_recharge_history WHERE card_no LIKE 'P4-CARD-%'));")"
+view_signatures="$(query_scalar "SELECT CONCAT(
+ (SELECT GROUP_CONCAT(COLUMN_NAME ORDER BY ORDINAL_POSITION SEPARATOR ',') FROM information_schema.COLUMNS WHERE TABLE_SCHEMA='phone_recharge_db' AND TABLE_NAME='v_user_card_purchase_detail'),'|',
+ (SELECT GROUP_CONCAT(COLUMN_NAME ORDER BY ORDINAL_POSITION SEPARATOR ',') FROM information_schema.COLUMNS WHERE TABLE_SCHEMA='phone_recharge_db' AND TABLE_NAME='v_mobile_recharge_history'));")"
+view_definition_count="$(query_scalar "SELECT COUNT(*) FROM information_schema.VIEWS WHERE TABLE_SCHEMA='phone_recharge_db' AND (
+ (TABLE_NAME='v_user_card_purchase_detail' AND LOWER(VIEW_DEFINITION) LIKE '%app_user%' AND LOWER(VIEW_DEFINITION) LIKE '%purchase_order%' AND LOWER(VIEW_DEFINITION) LIKE '%order_item%' AND LOWER(VIEW_DEFINITION) LIKE '%recharge_card%')
+ OR
+ (TABLE_NAME='v_mobile_recharge_history' AND LOWER(VIEW_DEFINITION) LIKE '%owner%' AND LOWER(VIEW_DEFINITION) LIKE '%mobile_number%' AND LOWER(VIEW_DEFINITION) LIKE '%recharge_record%' AND LOWER(VIEW_DEFINITION) LIKE '%recharge_card%'));")"
 assert_equals "视图数量" "2" "${view_count}"
 assert_equals "视图列数 purchase,recharge" "15,11" "${view_columns}"
+assert_equals "视图列签名" "user_id,login_name,display_name,order_id,order_no,order_created_at,order_status,total_amount,item_id,denomination,quantity,card_id,card_no,face_value,card_status|owner_id,owner_name,mobile_id,phone_number,number_status,recharge_id,card_id,card_no,card_status,recharge_amount,recharged_at" "${view_signatures}"
+assert_equals "视图定义关联路径数量" "2" "${view_definition_count}"
 assert_equals "视图中的阶段4行数 purchase,recharge" "11,10" "${view_rows}"
-
-run_sql_file "创建两个触发器" "${SQL_DIR}/21_create_phase5_triggers.sql"
 
 trigger_count="$(query_scalar "SELECT COUNT(*) FROM information_schema.TRIGGERS WHERE TRIGGER_SCHEMA='phone_recharge_db' AND TRIGGER_NAME IN ('trg_recharge_record_validate','trg_recharge_record_mark_card_used');")"
 before_count="$(query_scalar "SELECT COUNT(*) FROM information_schema.TRIGGERS WHERE TRIGGER_SCHEMA='phone_recharge_db' AND TRIGGER_NAME='trg_recharge_record_validate' AND ACTION_TIMING='BEFORE' AND EVENT_MANIPULATION='INSERT' AND EVENT_OBJECT_TABLE='recharge_record';")"
 after_count="$(query_scalar "SELECT COUNT(*) FROM information_schema.TRIGGERS WHERE TRIGGER_SCHEMA='phone_recharge_db' AND TRIGGER_NAME='trg_recharge_record_mark_card_used' AND ACTION_TIMING='AFTER' AND EVENT_MANIPULATION='INSERT' AND EVENT_OBJECT_TABLE='recharge_record';")"
+validate_definition_count="$(query_scalar "SELECT COUNT(*) FROM information_schema.TRIGGERS WHERE TRIGGER_SCHEMA='phone_recharge_db' AND TRIGGER_NAME='trg_recharge_record_validate' AND LOWER(ACTION_STATEMENT) LIKE '%p5_card_not_unused%' AND LOWER(ACTION_STATEMENT) LIKE '%p5_amount_mismatch%' AND LOWER(ACTION_STATEMENT) LIKE '%card_status%' AND LOWER(ACTION_STATEMENT) LIKE '%unused%' AND LOWER(ACTION_STATEMENT) LIKE '%face_value%' AND LOWER(ACTION_STATEMENT) LIKE '%recharge_amount%';")"
+mark_definition_count="$(query_scalar "SELECT COUNT(*) FROM information_schema.TRIGGERS WHERE TRIGGER_SCHEMA='phone_recharge_db' AND TRIGGER_NAME='trg_recharge_record_mark_card_used' AND LOWER(ACTION_STATEMENT) LIKE '%recharge_card%' AND LOWER(ACTION_STATEMENT) LIKE '%card_status%' AND LOWER(ACTION_STATEMENT) LIKE '%used%' AND LOWER(ACTION_STATEMENT) LIKE '%used_at%' AND LOWER(ACTION_STATEMENT) LIKE '%recharged_at%';")"
 assert_equals "触发器数量" "2" "${trigger_count}"
 assert_equals "BEFORE INSERT 触发器元数据" "1" "${before_count}"
 assert_equals "AFTER INSERT 触发器元数据" "1" "${after_count}"
+assert_equals "BEFORE触发器定义匹配" "1" "${validate_definition_count}"
+assert_equals "AFTER触发器定义匹配" "1" "${mark_definition_count}"
 
 run_sql_file "输出视图和触发器验证详情" "${SQL_DIR}/22_verify_phase5_objects.sql"
 
 echo
 echo "===== 触发器正常路径与预期失败测试 ====="
 set +e
-obclient_base --force --unbuffered --batch < "${SQL_DIR}/23_test_phase5_triggers.sql" 2>&1 \
+obclient_base --force --unbuffered --batch --skip-column-names < "${SQL_DIR}/23_test_phase5_triggers.sql" 2>&1 \
     | tee "${TEST_LOG}"
 test_client_rc=${PIPESTATUS[0]}
 set -e
@@ -181,8 +198,8 @@ assert_equals "测试后阶段4基准行数" "${baseline_p4}" "${after_p4}"
 FINAL_STATUS="PASS"
 echo
 echo "========== 阶段 5 汇总 =========="
-echo "PASS：2 个视图创建成功，元数据和阶段4查询结果正确"
-echo "PASS：2 个触发器创建成功，BEFORE/AFTER INSERT 元数据正确"
+echo "PASS：2 个视图存在，定义、元数据和阶段4查询结果正确"
+echo "PASS：2 个触发器存在，定义及BEFORE/AFTER INSERT元数据正确"
 echo "PASS：正常充值成功并自动把充值卡改为 USED、记录 used_at"
 echo "PASS：金额不符、已使用卡和同一卡重复充值均被正确拒绝"
 echo "PASS：P5 测试数据全部回滚，阶段4基准数据未改变"

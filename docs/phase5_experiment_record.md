@@ -1,8 +1,10 @@
 # 阶段 5 视图与触发器实验记录
 
-## 1. 当前状态
+## 1. 当前状态与首次执行结论
 
-SQL、日志检查程序和自动化入口已经准备，**尚未在本地 OceanBase 执行**。以下均为设计和预期结果，不能作为真实实验结果。
+阶段5已于本地OceanBase CE 5.0.1.0执行一次，真实主日志为 `phase5_views_triggers_20261108_032918.txt`。数据库实验主体成功，但入口脚本最终状态为 **FAIL**，因此阶段5暂不标记为完成。
+
+FAIL的已知原因是日志解析误判：测试会话使用 `--batch` 且未使用 `--skip-column-names`，`SELECT 'EXPECT_FAIL|…'` 的列名和结果值相同，obclient为每个用例输出两个相邻相同标记。旧解析器把第二个标记误认为前一个标记后缺少ERROR。修复版同时关闭测试查询列名，并只允许一对相邻、完全相同的兼容标记。
 
 ## 2. 实验对象
 
@@ -18,38 +20,39 @@ SQL、日志检查程序和自动化入口已经准备，**尚未在本地 Ocean
 
 ## 3. 预期验证
 
-| 项目 | 预期结果 | 实际结果 |
+| 项目 | 预期结果 | 首次真实结果 |
 |---|---|---|
-| 视图数量 | 2 | 待本地验证 |
-| 两个视图列数 | 15、11 | 待本地验证 |
-| 阶段4购卡/充值视图行数 | 11、10 | 待本地验证 |
-| 触发器数量 | 2 | 待本地验证 |
-| BEFORE/AFTER INSERT元数据 | 各1条 | 待本地验证 |
-| 正常充值记录数 | 1 | 待本地验证 |
-| 正常充值后的卡状态 | USED | 待本地验证 |
-| used_at | 等于recharged_at | 待本地验证 |
-| 金额不符 | `P5_AMOUNT_MISMATCH` | 待本地验证 |
-| 已使用卡 | `P5_CARD_NOT_UNUSED` | 待本地验证 |
-| 同一卡重复充值 | `P5_CARD_NOT_UNUSED` | 待本地验证 |
-| P5测试数据残留 | 0 | 待本地验证 |
-| 阶段4最终行数 | `10,10,11,10,11,11,10` | 待本地验证 |
-| 自动化最终状态 | PASS | 待本地验证 |
+| 视图数量 | 2 | 2，成功 |
+| 两个视图列数 | 15、11 | 15、11，成功 |
+| 阶段4购卡/充值视图行数 | 11、10 | 11、10，成功 |
+| 触发器数量 | 2 | 2，成功 |
+| BEFORE/AFTER INSERT元数据 | 各1条 | 各1条，成功 |
+| 正常充值记录数 | 1 | 1，成功 |
+| 正常充值后的卡状态 | USED | USED，成功 |
+| used_at | 等于recharged_at | `2026-05-01 09:00:00.123456`，成功 |
+| 金额不符 | `P5_AMOUNT_MISMATCH` | ERROR 1644，符合预期 |
+| 已使用卡 | `P5_CARD_NOT_UNUSED` | ERROR 1644，符合预期 |
+| 同一卡重复充值 | `P5_CARD_NOT_UNUSED` | ERROR 1644，符合预期 |
+| 失败后的状态 | `1|UNUSED|0|USED|0` | 符合预期 |
+| P5测试数据残留 | 0 | `ROLLBACK_RESULT|0` |
+| 阶段4执行前基准 | `10,10,11,10,11,11,10` | 符合预期 |
+| 自动化最终状态 | PASS | FAIL：日志解析误判，待恢复验证 |
 
 ## 4. 事务与清理策略
 
 P5用户、机主、号码、订单、明细、卡和充值记录全部在一个事务中创建。正常插入和三个失败用例完成后执行 ROLLBACK，再由新连接核对P5残留为0和阶段4计数未改变。视图和触发器是本阶段要保留的数据库对象，不在事务中回滚。
 
-如果对象创建阶段发生真正错误，脚本会停止。DDL可能已经自动提交，因此不得盲目重跑，应先查询 `information_schema.VIEWS` 和 `information_schema.TRIGGERS` 判断是否部分创建。
+首次执行后2个视图和2个触发器已经存在。修复版入口在对象数为4时进入恢复验证模式，不重复创建或删除对象；它会严格核对视图列签名、关联定义、触发器时机、事件、目标表和动作语句。对象数为1—3时仍会停止，避免掩盖部分创建状态。
 
 ## 5. AFTER INSERT 与现有约束的静态审核
 
 AFTER触发器只更新被新充值记录引用的 `recharge_card` 行，不改变主键、`item_id`或`card_id`，因此不改变现有FK关系。它在一个UPDATE中同时把 `card_status` 设为USED、把 `used_at`设为非空的 `NEW.recharged_at`，与 `ck_recharge_card_status` 和 `ck_recharge_card_used_at` 一致。`recharged_at`本身为NOT NULL，所以不会把空时间写入USED卡。
 
-`recharge_record.card_id`的UNIQUE仍保留。一卡重复充值通常会先被BEFORE触发器以 `P5_CARD_NOT_UNUSED` 拒绝；即使业务校验出现并发竞态，UNIQUE仍是数据库层的最后防线。上述结论已完成静态审核，真实触发器执行顺序与OceanBase行为仍待本地验证。
+`recharge_record.card_id`的UNIQUE仍保留。一卡重复充值会先被BEFORE触发器以 `P5_CARD_NOT_UNUSED` 拒绝；即使业务校验出现并发竞态，UNIQUE仍是数据库层的最后防线。首次真实执行已验证正常插入、AFTER状态更新和三个失败分支。
 
-## 6. OceanBase待验证点
+## 6. OceanBase兼容性结论
 
-OceanBase CE 5.0.1.0 MySQL模式是否完整支持本脚本使用的 `DELIMITER`、多语句触发器、局部变量、`SELECT ... INTO`、`SIGNAL SQLSTATE '45000'`，以及AFTER INSERT触发器更新关联父表，均必须以本地真实执行为准。脚本没有把MySQL兼容等同于已经验证成功。
+首次真实执行证明OceanBase CE 5.0.1.0 MySQL模式支持本脚本使用的 `DELIMITER`、多语句触发器、`DECLARE`、`SELECT ... INTO`、`SIGNAL SQLSTATE '45000'`，以及AFTER INSERT触发器更新 `recharge_card`。当前待验证项只剩修复后入口能否完成全部自动断言并输出最终PASS。
 
 ## 7. 对后续实验的影响
 
@@ -68,4 +71,4 @@ ChatGPT审核通过后，在仓库根目录只执行：
 bash scripts/run_phase5_views_triggers.sh
 ```
 
-脚本隐藏读取一次 `root@coursework` 密码。当前文档不包含任何本地执行结果。
+脚本隐藏读取一次 `root@coursework` 密码。修复后的恢复验证尚未执行，阶段5仍不能写成PASS。

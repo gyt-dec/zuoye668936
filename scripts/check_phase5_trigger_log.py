@@ -35,14 +35,33 @@ def main() -> int:
     passed: list[tuple[str, str]] = []
     problems: list[str] = []
     pending: tuple[str, str] | None = None
+    duplicate_marker_seen = False
+    previous_nonempty_line: str | None = None
 
     for line in stripped:
         marker = MARKER_RE.match(line)
         if marker:
-            if pending is not None:
+            current = (marker.group(1), marker.group(2))
+            if pending is None:
+                pending = current
+                seen.append(current)
+                duplicate_marker_seen = False
+            elif (
+                current == pending
+                and not duplicate_marker_seen
+                and previous_nonempty_line == line
+            ):
+                # obclient未使用--skip-column-names时，字符串常量的列名与值相同，
+                # 会形成一对相邻相同标记。只允许这一种有界重复。
+                duplicate_marker_seen = True
+            elif current == pending:
+                problems.append(f"{current[0]} 标记重复超过两次")
+            else:
                 problems.append(f"{pending[0]} 后没有出现 ERROR")
-            pending = (marker.group(1), marker.group(2))
-            seen.append(pending)
+                pending = current
+                seen.append(current)
+                duplicate_marker_seen = False
+            previous_nonempty_line = line
             continue
 
         error = ERROR_RE.match(line)
@@ -54,9 +73,14 @@ def main() -> int:
                     f"{pending[0]} 错误消息不匹配：expected={pending[1]}, actual={error.group(1)}"
                 )
                 pending = None
+                duplicate_marker_seen = False
             else:
                 passed.append(pending)
                 pending = None
+                duplicate_marker_seen = False
+
+        if line:
+            previous_nonempty_line = line
 
     if pending is not None:
         problems.append(f"{pending[0]} 后没有出现 ERROR")
