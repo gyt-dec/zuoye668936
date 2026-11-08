@@ -19,18 +19,23 @@
 
 不开发前端、支付接口、短信、微服务或复杂权限。
 
-## 3. Python模块设计
+## 3. Python模块实现
 
-计划文件：
+已实现文件：
 
 - `src/db_config.py`：从环境变量或隐藏输入读取连接配置；
 - `src/db.py`：连接、事务上下文和统一关闭；
 - `src/security.py`：测试密码摘要和校验，禁止保存明文；
+- `src/errors.py`：不暴露SQL内部信息的业务异常；
 - `src/services/user_service.py`：注册用户；
 - `src/services/mobile_service.py`：机主和号码管理；
 - `src/services/purchase_service.py`：订单、明细和充值卡创建；
 - `src/services/recharge_service.py`：充值事务；
+- `src/services/query_service.py`：查询阶段5两个视图；
+- `src/services/integrity_service.py`：P4、P5和P6保护检查；
 - `src/cli.py`：本科/研究生课程作业可理解的命令行入口；
+- `src/phase6_business_test.py`：自动业务正反测试；
+- `tests/test_phase6_unit.py`：不连接数据库的代码级测试；
 - `scripts/run_phase6_python_business.sh`：自动实验唯一入口；
 - `requirements.txt`：固定数据库驱动版本。
 
@@ -38,7 +43,7 @@
 
 ## 4. 事务边界
 
-注册、创建号码、购买和充值分别使用明确事务。购卡事务必须原子写入订单、订单明细和多张卡；任一步失败则全部回滚。充值事务验证卡号和测试密码、手机号存在后插入 `recharge_record`，由阶段5触发器校验面额并更新卡状态；程序捕获业务错误并回滚。
+注册、创建号码、购买和充值分别使用明确事务。购卡事务必须原子写入订单、订单明细和多张卡；任一步失败则全部回滚。充值事务使用 `SELECT ... FOR UPDATE` 锁定卡行，验证卡号、测试密码和手机号后插入 `recharge_record`，由阶段5触发器校验面额并更新卡状态；程序捕获业务错误并回滚。
 
 数据库UNIQUE、FK、CHECK和触发器仍是最终完整性防线，Python不绕过这些约束。
 
@@ -68,14 +73,14 @@
 
 ## 7. 单一入口
 
-计划入口：
+单一入口：
 
 ```bash
 bash scripts/run_phase6_python_business.sh
 ```
 
-入口脚本将检查Python版本和依赖、隐藏读取一次数据库密码并执行自动测试。依赖安装方式和是否创建项目虚拟环境需在实现阶段经ChatGPT审核后确定。
+入口脚本检查Python版本和固定依赖、隐藏读取一次数据库密码并执行自动测试。若项目专用 `.venv-phase6` 不存在，脚本会创建它并安装 `requirements.txt`，不修改系统Python环境。
 
 ## 8. 当前状态
 
-本文件仅为详细设计。阶段6代码和入口脚本尚未实现，也没有执行任何阶段6数据库实验。
+Python模块、单元测试和单一入口已经实现，并完成云端静态及代码级测试。云端无法连接用户本地OceanBase，因此阶段6尚未真实执行，状态为“待本地验证”，不能标记PASS。

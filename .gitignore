@@ -5,6 +5,10 @@
 results/phase3/*.txt
 results/phase4/*.txt
 results/phase5/*.txt
+results/phase6/*.txt
+
+# 阶段6项目专用Python虚拟环境
+.venv-phase6/
 
 # Python 静态检查缓存
 __pycache__/

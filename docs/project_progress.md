@@ -53,4 +53,4 @@
 
 ## 5. 当前下一阶段
 
-阶段6只完成详细设计，见 `docs/phase6_plan.md`。阶段6代码尚未实现，数据库实验尚未执行。
+阶段6的Python业务模块、单元测试和单一入口已实现，见 `docs/phase6_plan.md` 和 `docs/phase6_experiment_record.md`。阶段6尚未在本地OceanBase执行，状态为待本地验证。
