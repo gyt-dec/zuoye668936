@@ -6,6 +6,7 @@ from __future__ import annotations
 import secrets
 import sys
 from decimal import Decimal
+from typing import Callable
 
 from src.db import connect, savepoint
 from src.db_config import load_database_config
@@ -262,10 +263,16 @@ def run() -> int:
     return 0
 
 
-if __name__ == "__main__":
+def main(runner: Callable[[], int] = run) -> int:
+    """将普通运行异常转换为失败退出码，不捕获SystemExit和KeyboardInterrupt。"""
+
     try:
-        raise SystemExit(run())
-    except BaseException as exc:
+        return runner()
+    except Exception as exc:
         # 不打印连接配置、密码或完整对象repr。
         print(f"最终状态：FAIL｜{exc.__class__.__name__}｜{exc}", file=sys.stderr)
-        raise SystemExit(1)
+        return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

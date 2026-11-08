@@ -83,4 +83,4 @@ bash scripts/run_phase6_python_business.sh
 
 ## 8. 当前状态
 
-Python模块、单元测试和单一入口已经实现。第一次本地运行发现PyMySQL的非ASCII密码编码问题；第二次运行确认连接修复成功，又发现完整性检查SQL中的字面量百分号被PyMySQL参数格式机制误解释。P4/P6的LIKE模式现已全部参数化，并通过真实PyMySQL `mogrify`回归测试。最新修复仍待本地复验，阶段6不能标记PASS。
+Python模块、单元测试和单一入口已经实现。前三次运行依次定位了非ASCII密码编码、LIKE百分号格式和正常`SystemExit(0)`被误捕获的问题。第三次运行的数据库实验主体、事务回滚及P4/P5保护全部真实PASS；入口退出逻辑现已修复并通过子进程回归测试，仍待最后一次本地复验后正式完成阶段6。

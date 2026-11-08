@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import ast
+import subprocess
 import sys
 import tempfile
 import types
@@ -16,6 +17,7 @@ from src.cli import parse_lines
 from src.db import connect, encode_password_for_pymysql, savepoint, transaction
 from src.db_config import ConfigError, DatabaseConfig, load_database_config
 from src.errors import BusinessError
+from src.phase6_business_test import main as phase6_main
 from src.security import hash_secret, verify_secret
 from src.services.integrity_service import p4_counts, p6_residue_count
 
@@ -209,6 +211,49 @@ class TransactionTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             with savepoint(FakeConnection(), "bad;DROP"):
                 pass
+
+
+class EntrypointTests(unittest.TestCase):
+    def test_success_runner_exits_process_with_zero(self):
+        project_root = Path(__file__).parents[1]
+        code = (
+            "from src.phase6_business_test import main; "
+            "raise SystemExit(main(lambda: 0))"
+        )
+        result = subprocess.run(
+            [sys.executable, "-c", code],
+            cwd=project_root,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn("最终状态：FAIL", result.stderr)
+
+    def test_exception_runner_exits_process_with_nonzero(self):
+        project_root = Path(__file__).parents[1]
+        code = """
+from src.phase6_business_test import main
+def fail():
+    raise RuntimeError('expected failure')
+raise SystemExit(main(fail))
+"""
+        result = subprocess.run(
+            [sys.executable, "-c", code],
+            cwd=project_root,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("最终状态：FAIL｜RuntimeError｜expected failure", result.stderr)
+
+    def test_keyboard_interrupt_is_not_swallowed(self):
+        def interrupt():
+            raise KeyboardInterrupt
+
+        with self.assertRaises(KeyboardInterrupt):
+            phase6_main(interrupt)
 
 
 class CliInputTests(unittest.TestCase):

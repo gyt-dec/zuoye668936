@@ -53,4 +53,4 @@
 
 ## 5. 当前下一阶段
 
-阶段6的Python业务模块、单元测试和单一入口已实现，见 `docs/phase6_plan.md` 和 `docs/phase6_experiment_record.md`。第一次本地运行定位并修复非ASCII密码编码；第二次确认连接成功后，又定位并修复LIKE百分号参数格式问题。最新修复仍待本地验证，阶段6尚未PASS。
+阶段6的Python业务模块、单元测试和单一入口已实现，见 `docs/phase6_plan.md` 和 `docs/phase6_experiment_record.md`。第三次本地运行已真实验证全部数据库业务、回滚和P4/P5保护，但正常`SystemExit(0)`被旧入口误报为FAIL；退出处理已修复，待最后复验后正式完成阶段6。
