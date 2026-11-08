@@ -2,7 +2,7 @@
 
 ## 1. 当前状态
 
-阶段6已进行第一次本地运行，但在PyMySQL建立连接时因非ASCII数据库密码触发编码异常，最终状态为FAIL。该问题已经完成代码修复，修复版尚待本地复验，因此阶段6仍不得标记为PASS。
+阶段6已进行两次本地运行，均保留为真实调试记录。第一次在连接阶段发现非ASCII数据库密码编码问题；第二次确认密码修复有效并成功连接OceanBase，但P4完整性查询中的LIKE百分号被PyMySQL参数格式机制误解释。第二个问题也已完成代码修复，修复版尚待本地复验，因此阶段6仍不得标记为PASS。
 
 第一次真实运行信息：
 
@@ -14,6 +14,18 @@
 - 尚未执行表检查、`connection.begin()`或任何P6业务写入，因此本次运行不会产生P6残留。
 
 根因是PyMySQL 1.1.1对`str`密码固定执行`encode("latin1")`。修复后连接层把按UTF-8读取的密码显式转换为UTF-8 `bytes`再交给PyMySQL，保持现有合法密码字节，不需要修改密码。
+
+第二次真实运行信息：
+
+- 时间：2026-11-08 16:44:37 +0800；
+- 日志：`phase6_python_business_20261108_164414.txt`；
+- 连接、OceanBase版本、MYSQL兼容模式和当前数据库检查均真实PASS；
+- 随后错误：`TypeError: not enough arguments for format string`；
+- 入口最终状态：FAIL；
+- 失败点是`p4_counts()`调用的P4基准查询。旧实现把空参数元组传给`cursor.execute()`，同时SQL的LIKE模式直接含有`%`，PyMySQL在发送查询前执行`query % args`而误解释这些百分号；
+- 失败前只完成环境与表数量的只读查询，尚未调用`connection.begin()`，也未执行任何P6写入。
+
+第二次修复把P4、P6完整性查询的全部LIKE模式改为`LIKE %s`并通过参数元组传入；无参数SQL则调用`cursor.execute(sql)`，不再传空元组。所有业务值仍由PyMySQL转义，不降低SQL注入防护。
 
 ## 2. 技术选择
 
@@ -88,10 +100,10 @@ bash scripts/run_phase6_python_business.sh
 已完成但不等同于数据库实验PASS：
 
 - 全部Python文件编译检查；
-- 15个正反单元测试，覆盖摘要校验、密码文件权限、非ASCII数据库密码UTF-8字节传递、事务成功提交、业务异常回滚、提交失败回滚、SAVEPOINT成功/失败、非法SAVEPOINT拒绝、CLI明细解析、SQL静态参数化和充值卡行锁检查；
+- 16个正反单元测试，覆盖摘要校验、密码文件权限、非ASCII数据库密码UTF-8字节传递、真实PyMySQL `mogrify`执行P4/P6 LIKE参数格式、事务成功提交、业务异常回滚、提交失败回滚、SAVEPOINT成功/失败、非法SAVEPOINT拒绝、CLI明细解析、SQL静态参数化和充值卡行锁检查；
 - CLI `--help`和6个命令注册检查；
 - Bash语法检查；
 - 单一入口模拟，确认密码只读取一次、临时文件权限600、进程退出后删除且日志无密码；
 - 安全扫描确认没有DROP、TRUNCATE或关闭外键逻辑。
 
-仍须本地OceanBase验证：非ASCII密码修复后的PyMySQL真实连接、OceanBase SAVEPOINT行为、购卡约束失败后的回滚、阶段5触发器与Python充值事务协作、视图查询、P6最终回滚以及P4/P5保护断言。
+第二次运行已经真实确认非ASCII密码修复后的PyMySQL连接。仍须本地OceanBase验证：P4/P6 LIKE参数修复、OceanBase SAVEPOINT行为、购卡约束失败后的回滚、阶段5触发器与Python充值事务协作、视图查询、P6最终回滚以及P4/P5保护断言。

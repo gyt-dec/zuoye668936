@@ -17,6 +17,7 @@ from src.db import connect, encode_password_for_pymysql, savepoint, transaction
 from src.db_config import ConfigError, DatabaseConfig, load_database_config
 from src.errors import BusinessError
 from src.security import hash_secret, verify_secret
+from src.services.integrity_service import p4_counts, p6_residue_count
 
 
 class FakeCursor:
@@ -52,6 +53,43 @@ class FakeConnection:
 
     def cursor(self):
         return FakeCursor(self.statements)
+
+
+class MogrifyCursor:
+    """使用真实PyMySQL mogrify验证参数格式，不连接数据库。"""
+
+    def __init__(self, owner):
+        self.owner = owner
+        self.driver_cursor = owner.driver_connection.cursor()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, traceback):
+        self.driver_cursor.close()
+        return False
+
+    def execute(self, sql, params=None):
+        self.owner.rendered_sql = self.driver_cursor.mogrify(sql, params)
+
+    def fetchone(self):
+        return {"value": self.owner.return_value}
+
+
+class MogrifyConnection:
+    def __init__(self, return_value):
+        import pymysql
+
+        self.driver_connection = pymysql.connect(
+            host="127.0.0.1", user="root", password=b"", defer_connect=True
+        )
+        # defer_connect不会接收服务器握手，mogrify只需要该状态位判断转义方式。
+        self.driver_connection.server_status = 0
+        self.return_value = return_value
+        self.rendered_sql = ""
+
+    def cursor(self):
+        return MogrifyCursor(self)
 
 
 class SecurityTests(unittest.TestCase):
@@ -186,6 +224,17 @@ class CliInputTests(unittest.TestCase):
 
 
 class SqlSafetyTests(unittest.TestCase):
+    def test_integrity_like_patterns_use_real_pymysql_parameter_formatting(self):
+        p4_connection = MogrifyConnection("10,10,11,10,11,11,10")
+        self.assertEqual(p4_counts(p4_connection), "10,10,11,10,11,11,10")
+        self.assertIn("LIKE 'p4_user_%'", p4_connection.rendered_sql)
+        self.assertIn("LIKE 'P4-CARD-%'", p4_connection.rendered_sql)
+
+        p6_connection = MogrifyConnection(0)
+        self.assertEqual(p6_residue_count(p6_connection), 0)
+        self.assertIn("LIKE 'p6_user_%'", p6_connection.rendered_sql)
+        self.assertIn("LIKE 'P6-CARD-%'", p6_connection.rendered_sql)
+
     def test_business_execute_calls_do_not_use_f_strings(self):
         service_root = Path(__file__).parents[1] / "src" / "services"
         for path in service_root.glob("*.py"):
