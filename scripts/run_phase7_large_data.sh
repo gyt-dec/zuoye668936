@@ -51,6 +51,7 @@ export OB_USER="${OB_USER:-root@coursework}"
 export OB_DATABASE="${OB_DATABASE:-phone_recharge_db}"
 export PYTHONPATH="${ROOT_DIR}"
 export PYTHONUNBUFFERED=1
+export P7_ESTIMATE_FILE="${RESULT_DIR}/phase7_space_estimate.json"
 
 echo "阶段7自动化开始：$(date '+%F %T %z')"
 echo "日志：${LOG_FILE}"

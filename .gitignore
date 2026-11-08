@@ -7,6 +7,7 @@ results/phase4/*.txt
 results/phase5/*.txt
 results/phase6/*.txt
 results/phase7/*.txt
+results/phase7/*.json
 
 # 阶段6项目专用Python虚拟环境
 .venv-phase6/

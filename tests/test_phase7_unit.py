@@ -18,6 +18,9 @@ from src.phase7_large_data import (
     phone_for_seq,
     quantity_for_order,
     require_no_anomalies,
+    estimate_full_space,
+    reject_performance_indexes,
+    validate_view_counts,
     user_row,
     validate_prefix_stats,
 )
@@ -125,6 +128,45 @@ class StaticSafetyTests(unittest.TestCase):
         self.assertIn("GV$OB_SERVERS", self.python_source)
         for forbidden in ("memory_limit=", "ALTER SYSTEM", "resource_hard_limit="):
             self.assertNotIn(forbidden, self.python_source)
+
+    def test_pilot_space_shortage_blocks_full_insert(self):
+        gib = 1024**3
+        before = {"data_used": gib, "filesystem_free": 10*gib, "data_capacity": 8*gib, "log_capacity": 4*gib, "log_used": gib}
+        after = {"data_used": int(1.1*gib), "filesystem_free": int(9.9*gib), "data_capacity": 8*gib, "log_capacity": 4*gib, "log_used": gib}
+        with self.assertRaises(RuntimeError):
+            estimate_full_space(before, after)
+
+    def test_space_estimation_failure_stops(self):
+        snapshot = {"data_used": 100, "filesystem_free": 1000, "data_capacity": 10000, "log_capacity": 10000, "log_used": 1}
+        with self.assertRaises(RuntimeError):
+            estimate_full_space(snapshot, dict(snapshot))
+
+    def test_used_at_must_equal_recharged_at(self):
+        self.assertIn("rc.used_at<>rr.recharged_at", self.python_source)
+
+    def test_cleanup_branch_precedes_normal_data_threshold(self):
+        run_source = self.python_source[self.python_source.index("def run(cleanup_mode") :]
+        self.assertLess(run_source.index("if cleanup_mode"), run_source.index("resource_before = resource_snapshot"))
+        self.assertIn("enforce_data=False", run_source)
+
+    def test_view_counts(self):
+        validate_view_counts(120000, 100000, 100000)
+        with self.assertRaises(RuntimeError):
+            validate_view_counts(119999, 100000, 100000)
+
+    def test_performance_index_is_rejected(self):
+        reject_performance_indexes({"PRIMARY", "uk_recharge_card_no"})
+        with self.assertRaises(RuntimeError):
+            reject_performance_indexes({"PRIMARY", "idx_card_status_created"})
+
+    def test_recovery_checks_internal_relationships(self):
+        self.assertIn("recovery_business_anomalies", self.python_source)
+        for marker in ("mobile_sequence", "order_sequence", "card_sequence", "record_sequence"):
+            self.assertIn(marker, self.python_source)
+
+    def test_cleanup_rejects_non_p7_children(self):
+        self.assertIn("cleanup_inbound_anomalies", self.python_source)
+        self.assertIn("non_p7_mobile_to_p7_owner", self.python_source)
 
 
 if __name__ == "__main__":

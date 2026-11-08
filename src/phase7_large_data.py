@@ -4,9 +4,14 @@
 from __future__ import annotations
 
 import argparse
+import json
+import math
+import os
+import shutil
 import time
 from datetime import datetime, timedelta
 from decimal import Decimal
+from pathlib import Path
 
 from src.db import connect
 from src.db_config import load_database_config
@@ -19,6 +24,9 @@ DOUBLE_CARD_ORDERS = 20_000
 FULL_CARDS = 120_000
 DENOMINATIONS = (Decimal("10.00"), Decimal("20.00"), Decimal("30.00"), Decimal("50.00"), Decimal("100.00"))
 P7_HASH = "p7$synthetic$pbkdf2-sha256$not-a-real-credential"
+DATA_RESERVE = 2 * 1024**3
+LOG_RESERVE = 1024**3
+BATCH_COUNTER = 0
 
 
 def batch_ranges(start: int, stop: int, size: int = BATCH_SIZE):
@@ -128,6 +136,7 @@ def fetch_ids(connection, table: str, key_column: str, id_column: str, keys: lis
 
 
 def execute_batch(connection, label: str, sql: str, rows: list[tuple]) -> None:
+    global BATCH_COUNTER
     started = time.perf_counter()
     try:
         connection.begin()
@@ -138,6 +147,9 @@ def execute_batch(connection, label: str, sql: str, rows: list[tuple]) -> None:
         connection.rollback()
         raise
     print(f"BATCH|{label}|rows={len(rows)}|seconds={time.perf_counter()-started:.6f}")
+    BATCH_COUNTER += 1
+    if BATCH_COUNTER % 20 == 0:
+        resource_snapshot(connection)
 
 
 def insert_simple(connection, label: str, current: int, target: int, sql: str, row_factory) -> None:
@@ -214,7 +226,7 @@ def relationship_anomalies(connection) -> dict[str, int]:
         "card_sequence": "SELECT COUNT(*) value FROM recharge_card rc JOIN order_item oi ON oi.item_id=rc.item_id JOIN purchase_order po ON po.order_id=oi.order_id WHERE rc.card_no LIKE %s AND CAST(SUBSTRING(po.order_no,10) AS UNSIGNED)<>CASE WHEN CAST(SUBSTRING(rc.card_no,9) AS UNSIGNED)<=40000 THEN (CAST(SUBSTRING(rc.card_no,9) AS UNSIGNED)+1) DIV 2 ELSE CAST(SUBSTRING(rc.card_no,9) AS UNSIGNED)-20000 END",
         "record_relation": "SELECT COUNT(*) value FROM recharge_record rr JOIN recharge_card rc ON rc.card_id=rr.card_id JOIN mobile_number mn ON mn.mobile_id=rr.mobile_id WHERE rc.card_no LIKE %s AND (mn.phone_number NOT LIKE %s OR rr.recharge_amount<>rc.face_value)",
         "record_sequence": "SELECT COUNT(*) value FROM recharge_record rr JOIN recharge_card rc ON rc.card_id=rr.card_id JOIN mobile_number mn ON mn.mobile_id=rr.mobile_id WHERE rc.card_no LIKE %s AND CAST(SUBSTRING(rc.card_no,9) AS UNSIGNED)<>CAST(SUBSTRING(mn.phone_number,5) AS UNSIGNED)",
-        "used_state": "SELECT COUNT(*) value FROM recharge_card rc LEFT JOIN recharge_record rr ON rr.card_id=rc.card_id WHERE rc.card_no LIKE %s AND ((rr.recharge_id IS NOT NULL AND (rc.card_status<>'USED' OR rc.used_at IS NULL)) OR (rr.recharge_id IS NULL AND (rc.card_status<>'UNUSED' OR rc.used_at IS NOT NULL)))",
+        "used_state": "SELECT COUNT(*) value FROM recharge_card rc LEFT JOIN recharge_record rr ON rr.card_id=rc.card_id WHERE rc.card_no LIKE %s AND ((rr.recharge_id IS NOT NULL AND (rc.card_status<>'USED' OR rc.used_at IS NULL OR rc.used_at<>rr.recharged_at)) OR (rr.recharge_id IS NULL AND (rc.card_status<>'UNUSED' OR rc.used_at IS NOT NULL)))",
         "duplicate_record": "SELECT COUNT(*) value FROM (SELECT rr.card_id FROM recharge_record rr JOIN recharge_card rc ON rc.card_id=rr.card_id WHERE rc.card_no LIKE %s GROUP BY rr.card_id HAVING COUNT(*)<>1) x",
     }
     params = {
@@ -245,6 +257,23 @@ def reference_anomalies(connection) -> dict[str, int]:
     return {name: int(scalar(connection, sql, params)) for name, (sql, params) in queries.items()}
 
 
+def recovery_business_anomalies(connection) -> dict[str, int]:
+    anomalies = relationship_anomalies(connection)
+    anomalies.pop("one_item", None)
+    anomalies.pop("card_quantity", None)
+    return anomalies
+
+
+def cleanup_inbound_anomalies(connection) -> dict[str, int]:
+    queries = {
+        "non_p7_mobile_to_p7_owner": ("SELECT COUNT(*) value FROM mobile_number mn JOIN owner o ON o.owner_id=mn.owner_id WHERE o.owner_name LIKE %s AND mn.phone_number NOT LIKE %s", ("P7_OWNER_%", "1987%")),
+        "non_p7_order_to_p7_user": ("SELECT COUNT(*) value FROM purchase_order po JOIN app_user u ON u.user_id=po.user_id WHERE u.login_name LIKE %s AND po.order_no NOT LIKE %s", ("p7_user_%", "P7-ORDER-%")),
+        "non_p7_card_to_p7_item": ("SELECT COUNT(*) value FROM recharge_card rc JOIN order_item oi ON oi.item_id=rc.item_id JOIN purchase_order po ON po.order_id=oi.order_id WHERE po.order_no LIKE %s AND rc.card_no NOT LIKE %s", ("P7-ORDER-%", "P7-CARD-%")),
+        "non_p7_record_to_p7_mobile": ("SELECT COUNT(*) value FROM recharge_record rr JOIN mobile_number mn ON mn.mobile_id=rr.mobile_id JOIN owner o ON o.owner_id=mn.owner_id JOIN recharge_card rc ON rc.card_id=rr.card_id WHERE o.owner_name LIKE %s AND rc.card_no NOT LIKE %s", ("P7_OWNER_%", "P7-CARD-%")),
+    }
+    return {name: int(scalar(connection, sql, params)) for name, (sql, params) in queries.items()}
+
+
 def validate_dataset(connection, order_target: int) -> None:
     counts = marker_counts(connection)
     expected = {"app_user": order_target, "owner": order_target, "mobile_number": order_target, "purchase_order": order_target, "order_item": order_target, "recharge_card": expected_card_count(order_target), "recharge_record": order_target}
@@ -264,10 +293,10 @@ def validate_prefixes(connection, order_target: int) -> None:
     counts = marker_counts(connection)
     if counts["mobile_number"] > counts["owner"] or counts["purchase_order"] > counts["app_user"] or counts["order_item"] > counts["purchase_order"] or counts["recharge_record"] > counts["recharge_card"]:
         raise RuntimeError(f"P7子表记录超前：{counts}")
-    require_no_anomalies("P7恢复检查发现父子关系异常", reference_anomalies(connection))
+    require_no_anomalies("P7恢复检查发现父子或业务关系异常", recovery_business_anomalies(connection))
 
 
-def resource_snapshot(connection) -> dict[str, int]:
+def resource_snapshot(connection, *, enforce_data: bool = True) -> dict[str, int]:
     try:
         with connection.cursor() as cursor:
             cursor.execute("SELECT * FROM oceanbase.GV$OB_SERVERS")
@@ -286,11 +315,68 @@ def resource_snapshot(connection) -> dict[str, int]:
         "data_used": pick("DATA_DISK_IN_USE"),
         "log_capacity": pick("LOG_DISK_CAPACITY"),
         "log_used": pick("LOG_DISK_IN_USE"),
+        "filesystem_free": int(shutil.disk_usage("/").free),
     }
-    if result["data_capacity"] - result["data_used"] < 2 * 1024**3 or result["log_capacity"] - result["log_used"] < 1024**3:
+    if result["log_capacity"] - result["log_used"] < LOG_RESERVE:
+        raise RuntimeError(f"OceanBase日志盘安全余量不足：{result}")
+    if enforce_data and (result["data_capacity"] - result["data_used"] < DATA_RESERVE or result["filesystem_free"] < DATA_RESERVE):
         raise RuntimeError(f"OceanBase数据盘或日志盘余量不足：{result}")
     print(f"RESOURCE|{result}")
     return result
+
+
+def estimate_full_space(before: dict[str, int], after: dict[str, int]) -> dict[str, int]:
+    growth = after["data_used"] - before["data_used"]
+    fs_growth = before["filesystem_free"] - after["filesystem_free"]
+    if growth <= 0 or fs_growth < 0:
+        raise RuntimeError("无法根据1000组预实验估算空间")
+    remaining = FULL_ORDERS - PILOT_ORDERS
+    estimated = math.ceil(growth * remaining / PILOT_ORDERS * 1.5)
+    estimated_fs = math.ceil(max(growth, fs_growth) * remaining / PILOT_ORDERS * 1.5)
+    data_free = after["data_capacity"] - after["data_used"]
+    log_free = after["log_capacity"] - after["log_used"]
+    if data_free - estimated < DATA_RESERVE or after["filesystem_free"] - estimated_fs < DATA_RESERVE or log_free < LOG_RESERVE:
+        raise RuntimeError("预实验估算显示完整数据空间不足")
+    result = {"pilot_growth": growth, "estimated_remaining": estimated, "data_safety": data_free-estimated, "log_safety": log_free}
+    print(f"SPACE_ESTIMATE|{result}")
+    estimate_file = os.environ.get("P7_ESTIMATE_FILE")
+    if estimate_file:
+        Path(estimate_file).write_text(json.dumps(result), encoding="utf-8")
+    return result
+
+
+def validate_saved_estimate(snapshot: dict[str, int]) -> None:
+    path = Path(os.environ.get("P7_ESTIMATE_FILE", ""))
+    if not path.is_file():
+        raise RuntimeError("恢复完整插入时缺少1000组空间估算文件，停止续跑")
+    data = json.loads(path.read_text(encoding="utf-8"))
+    if snapshot["data_capacity"] - snapshot["data_used"] < DATA_RESERVE or snapshot["log_capacity"] - snapshot["log_used"] < LOG_RESERVE:
+        raise RuntimeError("恢复时磁盘安全余量不足")
+    print(f"SPACE_ESTIMATE_REUSED|{data}")
+
+
+def reject_performance_indexes(index_names: set[str]) -> None:
+    allowed = {"PRIMARY", "uk_app_user_login_name", "uk_mobile_number_phone", "uk_purchase_order_no", "uk_order_item_order_denomination", "uk_recharge_card_no", "uk_recharge_record_card", "fk_mobile_number_owner", "fk_purchase_order_user", "fk_order_item_order", "fk_recharge_card_item", "fk_recharge_record_card", "fk_recharge_record_mobile"}
+    unexpected = index_names - allowed
+    if unexpected:
+        raise RuntimeError(f"检测到阶段8性能索引：{sorted(unexpected)}")
+
+
+def validate_index_baseline(connection) -> None:
+    with connection.cursor() as cursor:
+        cursor.execute("SELECT DISTINCT INDEX_NAME FROM information_schema.STATISTICS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME IN ('app_user','owner','mobile_number','purchase_order','order_item','recharge_card','recharge_record')")
+        reject_performance_indexes({row["INDEX_NAME"] for row in cursor.fetchall()})
+
+
+def validate_views(connection, order_target: int) -> None:
+    purchase = int(scalar(connection, "SELECT COUNT(*) value FROM v_user_card_purchase_detail WHERE order_no LIKE %s", ("P7-ORDER-%",)))
+    recharge = int(scalar(connection, "SELECT COUNT(*) value FROM v_mobile_recharge_history WHERE phone_number LIKE %s", ("1987%",)))
+    validate_view_counts(purchase, recharge, order_target)
+
+
+def validate_view_counts(purchase: int, recharge: int, order_target: int) -> None:
+    if purchase != expected_card_count(order_target) or recharge != order_target:
+        raise RuntimeError(f"阶段5视图P7数量错误：purchase={purchase},recharge={recharge}")
 
 
 def delete_ids(connection, table: str, id_column: str, select_sql: str, params: tuple) -> None:
@@ -316,6 +402,7 @@ def cleanup(connection) -> None:
     counts = marker_counts(connection)
     print(f"CLEANUP_PREVIEW|{counts}")
     require_no_anomalies("清理前发现P7子记录错误引用，拒绝删除", reference_anomalies(connection))
+    require_no_anomalies("清理前发现非P7子记录引用P7父记录，拒绝删除", cleanup_inbound_anomalies(connection))
     confirmation = input("请输入完整确认文本 DELETE P7 DATA：")
     if confirmation != "DELETE P7 DATA":
         raise RuntimeError("确认文本不匹配，未删除任何数据")
@@ -346,22 +433,28 @@ def run(cleanup_mode: bool) -> int:
     started = time.perf_counter()
     try:
         protect_baseline(connection)
-        resource_before = resource_snapshot(connection)
         if cleanup_mode:
+            resource_snapshot(connection, enforce_data=False)
             cleanup(connection)
             protect_baseline(connection)
             return 0
+        validate_index_baseline(connection)
+        resource_before = resource_snapshot(connection)
         validate_prefixes(connection, FULL_ORDERS)
         existing = marker_counts(connection)
         if max(existing.values(), default=0) <= expected_card_count(PILOT_ORDERS):
             print("阶段7开始1000组小规模预实验/恢复检查")
             insert_to_target(connection, PILOT_ORDERS)
             validate_dataset(connection, PILOT_ORDERS)
+            pilot_after = resource_snapshot(connection)
+            estimate_full_space(resource_before, pilot_after)
         else:
             print(f"PILOT_SKIPPED|检测到已超过1000组的合法恢复前缀|{existing}")
+            validate_saved_estimate(resource_snapshot(connection))
         print("阶段7开始续跑至10万组关联数据")
         insert_to_target(connection, FULL_ORDERS)
         validate_dataset(connection, FULL_ORDERS)
+        validate_views(connection, FULL_ORDERS)
         protect_baseline(connection)
         resource_after = resource_snapshot(connection)
         print(f"SPACE_CHANGE|data={resource_after['data_used']-resource_before['data_used']}|log={resource_after['log_used']-resource_before['log_used']}")
