@@ -9,6 +9,17 @@ from typing import Iterator
 from src.db_config import DatabaseConfig
 
 
+def encode_password_for_pymysql(password: str) -> bytes:
+    """按入口文件的UTF-8编码还原密码字节，绕开PyMySQL的latin-1转换。
+
+    PyMySQL 1.1.1会对str密码固定调用encode("latin1")。密码临时文件由
+    Bash原样写入，并由db_config按UTF-8读取，因此这里重新编码为UTF-8字节，
+    可以保留非ASCII密码的原始字节。PyMySQL原生接受bytes密码。
+    """
+
+    return password.encode("utf-8")
+
+
 def connect(config: DatabaseConfig, *, autocommit: bool = False):
     """延迟导入PyMySQL，便于在未安装驱动时执行纯代码单元测试。"""
 
@@ -22,7 +33,8 @@ def connect(config: DatabaseConfig, *, autocommit: bool = False):
         host=config.host,
         port=config.port,
         user=config.user,
-        password=config.password,
+        # 传入bytes，避免PyMySQL 1.1.1对str密码强制使用latin-1编码。
+        password=encode_password_for_pymysql(config.password),
         database=config.database,
         charset="utf8mb4",
         autocommit=autocommit,

@@ -4,15 +4,17 @@ from __future__ import annotations
 
 import os
 import ast
+import sys
 import tempfile
+import types
 import unittest
 from decimal import Decimal
 from pathlib import Path
 from unittest.mock import patch
 
 from src.cli import parse_lines
-from src.db import savepoint, transaction
-from src.db_config import ConfigError, load_database_config
+from src.db import connect, encode_password_for_pymysql, savepoint, transaction
+from src.db_config import ConfigError, DatabaseConfig, load_database_config
 from src.errors import BusinessError
 from src.security import hash_secret, verify_secret
 
@@ -87,6 +89,39 @@ class ConfigTests(unittest.TestCase):
             with patch.dict(os.environ, {"OB_PASSWORD_FILE": str(path)}, clear=True):
                 with self.assertRaises(ConfigError):
                     load_database_config()
+
+    def test_non_ascii_password_is_passed_to_pymysql_as_utf8_bytes(self):
+        captured: dict[str, object] = {}
+        sentinel = object()
+        fake_pymysql = types.ModuleType("pymysql")
+        fake_cursors = types.ModuleType("pymysql.cursors")
+        fake_cursors.DictCursor = object()
+
+        def fake_connect(**kwargs):
+            captured.update(kwargs)
+            return sentinel
+
+        fake_pymysql.connect = fake_connect
+        config = DatabaseConfig(
+            host="127.0.0.1",
+            port=2881,
+            user="root@coursework",
+            password="课程密码-安全✓",
+            database="phone_recharge_db",
+        )
+        with patch.dict(
+            sys.modules,
+            {"pymysql": fake_pymysql, "pymysql.cursors": fake_cursors},
+        ):
+            result = connect(config)
+
+        self.assertIs(result, sentinel)
+        self.assertEqual(captured["password"], "课程密码-安全✓".encode("utf-8"))
+        self.assertIsInstance(captured["password"], bytes)
+        self.assertEqual(
+            encode_password_for_pymysql("课程密码-安全✓"),
+            "课程密码-安全✓".encode("utf-8"),
+        )
 
 
 class TransactionTests(unittest.TestCase):

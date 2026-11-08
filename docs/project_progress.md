@@ -53,4 +53,4 @@
 
 ## 5. 当前下一阶段
 
-阶段6的Python业务模块、单元测试和单一入口已实现，见 `docs/phase6_plan.md` 和 `docs/phase6_experiment_record.md`。阶段6尚未在本地OceanBase执行，状态为待本地验证。
+阶段6的Python业务模块、单元测试和单一入口已实现，见 `docs/phase6_plan.md` 和 `docs/phase6_experiment_record.md`。第一次本地运行在PyMySQL连接阶段因非ASCII密码编码问题失败，未进入业务事务；修复版仍待本地验证，阶段6尚未PASS。

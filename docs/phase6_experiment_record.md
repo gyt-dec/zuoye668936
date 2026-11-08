@@ -2,7 +2,18 @@
 
 ## 1. 当前状态
 
-Python业务代码、单元测试和单一入口已经实现并完成云端代码级检查，**尚未在本地OceanBase执行**，不得标记为PASS。
+阶段6已进行第一次本地运行，但在PyMySQL建立连接时因非ASCII数据库密码触发编码异常，最终状态为FAIL。该问题已经完成代码修复，修复版尚待本地复验，因此阶段6仍不得标记为PASS。
+
+第一次真实运行信息：
+
+- 时间：2026-11-08 16:39:27 +0800；
+- 日志：`phase6_python_business_20261108_163855.txt`；
+- 错误：`UnicodeEncodeError: 'latin-1' codec can't encode characters ...`；
+- 入口最终状态：FAIL；
+- 失败发生在PyMySQL构造连接和认证参数阶段，尚未返回数据库连接；
+- 尚未执行表检查、`connection.begin()`或任何P6业务写入，因此本次运行不会产生P6残留。
+
+根因是PyMySQL 1.1.1对`str`密码固定执行`encode("latin1")`。修复后连接层把按UTF-8读取的密码显式转换为UTF-8 `bytes`再交给PyMySQL，保持现有合法密码字节，不需要修改密码。
 
 ## 2. 技术选择
 
@@ -77,10 +88,10 @@ bash scripts/run_phase6_python_business.sh
 已完成但不等同于数据库实验PASS：
 
 - 全部Python文件编译检查；
-- 14个正反单元测试，覆盖摘要校验、密码文件权限、事务成功提交、业务异常回滚、提交失败回滚、SAVEPOINT成功/失败、非法SAVEPOINT拒绝、CLI明细解析、SQL静态参数化和充值卡行锁检查；
+- 15个正反单元测试，覆盖摘要校验、密码文件权限、非ASCII数据库密码UTF-8字节传递、事务成功提交、业务异常回滚、提交失败回滚、SAVEPOINT成功/失败、非法SAVEPOINT拒绝、CLI明细解析、SQL静态参数化和充值卡行锁检查；
 - CLI `--help`和6个命令注册检查；
 - Bash语法检查；
 - 单一入口模拟，确认密码只读取一次、临时文件权限600、进程退出后删除且日志无密码；
 - 安全扫描确认没有DROP、TRUNCATE或关闭外键逻辑。
 
-仍须本地OceanBase验证：PyMySQL真实连接、OceanBase SAVEPOINT行为、购卡约束失败后的回滚、阶段5触发器与Python充值事务协作、视图查询、P6最终回滚以及P4/P5保护断言。
+仍须本地OceanBase验证：非ASCII密码修复后的PyMySQL真实连接、OceanBase SAVEPOINT行为、购卡约束失败后的回滚、阶段5触发器与Python充值事务协作、视图查询、P6最终回滚以及P4/P5保护断言。
