@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import unittest
+import json
+import os
+import tempfile
 from decimal import Decimal
 from pathlib import Path
 
@@ -19,7 +22,9 @@ from src.phase7_large_data import (
     quantity_for_order,
     require_no_anomalies,
     estimate_full_space,
+    pilot_resume_action,
     reject_performance_indexes,
+    validate_saved_estimate,
     validate_view_counts,
     user_row,
     validate_prefix_stats,
@@ -131,13 +136,13 @@ class StaticSafetyTests(unittest.TestCase):
 
     def test_pilot_space_shortage_blocks_full_insert(self):
         gib = 1024**3
-        before = {"data_used": gib, "filesystem_free": 10*gib, "data_capacity": 8*gib, "log_capacity": 4*gib, "log_used": gib}
-        after = {"data_used": int(1.1*gib), "filesystem_free": int(9.9*gib), "data_capacity": 8*gib, "log_capacity": 4*gib, "log_used": gib}
+        before = {"data_used": gib, "data_filesystem_free": 10*gib, "data_capacity": 8*gib, "log_capacity": 4*gib, "log_used": gib}
+        after = {"data_used": int(1.1*gib), "data_filesystem_free": int(9.9*gib), "data_capacity": 8*gib, "log_capacity": 4*gib, "log_used": gib}
         with self.assertRaises(RuntimeError):
             estimate_full_space(before, after)
 
     def test_space_estimation_failure_stops(self):
-        snapshot = {"data_used": 100, "filesystem_free": 1000, "data_capacity": 10000, "log_capacity": 10000, "log_used": 1}
+        snapshot = {"data_used": 100, "data_filesystem_free": 1000, "data_capacity": 10000, "log_capacity": 10000, "log_used": 1}
         with self.assertRaises(RuntimeError):
             estimate_full_space(snapshot, dict(snapshot))
 
@@ -167,6 +172,38 @@ class StaticSafetyTests(unittest.TestCase):
     def test_cleanup_rejects_non_p7_children(self):
         self.assertIn("cleanup_inbound_anomalies", self.python_source)
         self.assertIn("non_p7_mobile_to_p7_owner", self.python_source)
+
+    def test_resume_space_shortage_and_missing_fields_stop(self):
+        gib = 1024**3
+        snapshot = {"data_used": 6*gib, "data_filesystem_free": 3*gib, "data_capacity": 8*gib, "log_capacity": 4*gib, "log_used": gib}
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "estimate.json"
+            old = os.environ.get("P7_ESTIMATE_FILE")
+            os.environ["P7_ESTIMATE_FILE"] = str(path)
+            try:
+                path.write_text(json.dumps({"per_group_data": 1000000, "per_group_filesystem": 1000000}))
+                with self.assertRaises(RuntimeError): validate_saved_estimate(snapshot, 1000)
+                path.write_text(json.dumps({"per_group_data": 1}))
+                with self.assertRaises(RuntimeError): validate_saved_estimate(snapshot, 1000)
+            finally:
+                if old is None: os.environ.pop("P7_ESTIMATE_FILE", None)
+                else: os.environ["P7_ESTIMATE_FILE"] = old
+
+    def test_completed_pilot_reuses_estimate_or_stops_if_missing(self):
+        counts = {"app_user":1000,"owner":1000,"mobile_number":1000,"purchase_order":1000,"order_item":1000,"recharge_card":2000,"recharge_record":1000}
+        self.assertEqual(pilot_resume_action(counts, True), "reuse_pilot")
+        with self.assertRaises(RuntimeError): pilot_resume_action(counts, False)
+
+    def test_exact_prefix_predicates_and_cleanup_guards(self):
+        self.assertNotIn(" LIKE ", self.python_source)
+        self.assertIn("LEFT(login_name,8)=%s", self.python_source)
+        self.assertIn("non_p7_item_to_p7_order", self.python_source)
+        self.assertIn("non_p7_record_to_p7_card", self.python_source)
+
+    def test_actual_oceanbase_mount_paths_required(self):
+        self.assertIn('pick_path("DATA_DISK_PATH")', self.python_source)
+        self.assertIn('pick_path("LOG_DISK_PATH")', self.python_source)
+        self.assertNotIn('disk_usage("/")', self.python_source)
 
 
 if __name__ == "__main__":
