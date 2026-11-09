@@ -1,0 +1,5 @@
+# Paxos设计说明
+
+实现包含Proposer、Acceptor、Learner及可比较的提议编号。Proposer先获得多数Promise，再选择Promise中最高已接受编号对应的值，随后发送Accept请求；多数Acceptor接受同一编号和值后Learner学习该值。投票按Acceptor ID去重，Learner一旦学习值便拒绝学习不同值。
+
+故障和消息丢失通过确定性集合注入，可重复验证少数失败仍成功、多数失败无共识、过期编号拒绝和竞争Proposer继承旧值。本实现为单值Paxos教学模拟，不包含真实网络、持久化、Multi-Paxos或OceanBase内部实现。
