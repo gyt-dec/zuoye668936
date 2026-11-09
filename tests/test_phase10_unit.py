@@ -8,7 +8,7 @@ from pathlib import Path
 
 from src.phase10_ddl_backup_restore import (
     TABLE_ORDER, canonical_rows, cleanup_after_verified_restore, file_sha256,
-    rows_hash, secure_write, validate_snapshot,
+    load_backup_file, rows_hash, secure_write, validate_snapshot,
 )
 
 
@@ -38,6 +38,32 @@ class Phase10UnitTests(unittest.TestCase):
             self.assertEqual(stat.S_IMODE(path.stat().st_mode),0o600)
             self.assertEqual(len(file_sha256(path)),64)
 
+    def write_test_backup(self, directory, snapshot=None):
+        snapshot = snapshot or sample_snapshot()
+        path=Path(directory)/"backup.json"
+        secure_write(path,json.dumps(snapshot,ensure_ascii=False,sort_keys=True))
+        manifest={"backup_sha256":file_sha256(path),"table_sha256":snapshot["table_sha256"]}
+        return path,manifest,snapshot
+
+    def test_real_backup_file_is_independently_loaded(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path,manifest,snapshot=self.write_test_backup(directory)
+            loaded=load_backup_file(path,manifest)
+            self.assertEqual(loaded["tables"],snapshot["tables"])
+            self.assertEqual(loaded["table_sha256"],snapshot["table_sha256"])
+
+    def test_corrupted_backup_file_is_rejected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path,manifest,_=self.write_test_backup(directory)
+            secure_write(path,path.read_text(encoding="utf-8")+"\ncorrupt")
+            with self.assertRaises(RuntimeError): load_backup_file(path,manifest)
+
+    def test_manifest_hash_mismatch_is_rejected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path,manifest,_=self.write_test_backup(directory)
+            manifest["backup_sha256"]="0"*64
+            with self.assertRaises(RuntimeError): load_backup_file(path,manifest)
+
     def test_canonical_hash_is_deterministic(self):
         one=[{"id":1,"amount":"10.00"}]; two=[{"amount":"10.00","id":1}]
         self.assertEqual(canonical_rows(one),canonical_rows(two)); self.assertEqual(rows_hash(one),rows_hash(two))
@@ -61,6 +87,13 @@ class Phase10UnitTests(unittest.TestCase):
         class NeverCalled: pass
         before=sample_snapshot(); after=sample_snapshot(); after["table_sha256"]=dict(after["table_sha256"]); after["table_sha256"]["app_user"]="bad"
         with self.assertRaises(RuntimeError): cleanup_after_verified_restore(NeverCalled(),{},after,before)
+
+    def test_restore_failure_path_does_not_automatically_cleanup(self):
+        run_source=self.source[self.source.index("def run()") :]
+        restore_pos=run_source.index("restore_snapshot(control,disk_backup)")
+        cleanup_pos=run_source.index("cleanup_after_verified_restore",restore_pos)
+        self.assertLess(restore_pos,cleanup_pos)
+        self.assertNotIn("finally: cleanup",run_source)
 
     def test_ddl_activity_records_success_failure_errors_and_max_latency(self):
         for marker in ('"success"','"failure"','"max_ms"','"errors"'):

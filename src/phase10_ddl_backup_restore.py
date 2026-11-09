@@ -227,7 +227,7 @@ def export_consistent_snapshot(connection, context) -> dict:
 
 
 def validate_snapshot(snapshot):
-    if tuple(snapshot["tables"].keys()) != TABLE_ORDER or snapshot["table_count"] != 7: raise RuntimeError("备份未覆盖七张表")
+    if set(snapshot["tables"].keys()) != set(TABLE_ORDER) or snapshot["table_count"] != 7: raise RuntimeError("备份未覆盖七张表")
     expected={"app_user":1,"owner":1,"mobile_number":1,"purchase_order":2,"order_item":2,"recharge_card":2,"recharge_record":1}
     if snapshot["counts"] != expected: raise RuntimeError(f"P10备份数量错误：{snapshot['counts']}")
     rows={name:{tuple(row.values()) for row in values} for name,values in snapshot["tables"].items()}
@@ -251,6 +251,25 @@ def write_backup(result_dir, snapshot):
     manifest_path=backup_dir/f"phase10_backup_manifest_{stamp}.json"; secure_write(manifest_path,json.dumps(manifest,ensure_ascii=False,indent=2,sort_keys=True))
     require_mode_600(backup_path); require_mode_600(manifest_path)
     return backup_path,manifest_path,manifest
+
+
+def load_backup_file(backup_path: Path, manifest: dict) -> dict:
+    """从真实JSON文件独立加载，并同时核对整文件及逐表摘要。"""
+    require_mode_600(backup_path)
+    actual_file_hash = file_sha256(backup_path)
+    if actual_file_hash != manifest.get("backup_sha256"):
+        raise RuntimeError("备份文件SHA-256与manifest不一致，拒绝恢复")
+    with backup_path.open("r", encoding="utf-8") as handle:
+        snapshot = json.load(handle)
+    validate_snapshot(snapshot)
+    actual_table_hashes = {
+        table: rows_hash(snapshot["tables"][table]) for table in TABLE_ORDER
+    }
+    if snapshot.get("table_sha256") != actual_table_hashes:
+        raise RuntimeError("备份文件内的表级SHA-256与数据不一致，拒绝恢复")
+    if manifest.get("table_sha256") != actual_table_hashes:
+        raise RuntimeError("备份表级SHA-256与manifest不一致，拒绝恢复")
+    return snapshot
 
 
 def delete_p10(connection, context):
@@ -320,20 +339,23 @@ def run():
         try: backup=export_consistent_snapshot(backup_connection,context)
         finally: backup_connection.close()
         validate_snapshot(backup); backup_path,manifest_path,manifest=write_backup(result_dir,backup)
+        # 后续比较、删除和恢复只使用从真实备份文件重新加载的对象。
+        disk_backup=load_backup_file(backup_path,manifest)
         state.update({"status":"backup_complete","backup":str(backup_path),"manifest":str(manifest_path),"backup_sha256":manifest["backup_sha256"]}); secure_write(state_path,json.dumps(state,ensure_ascii=False,indent=2))
         current_connection=connect(config,autocommit=False)
         try: current=export_consistent_snapshot(current_connection,context)
         finally: current_connection.close()
-        if current["table_sha256"]!=backup["table_sha256"]: raise RuntimeError("删除前数据库快照与备份不一致")
+        if current["table_sha256"]!=disk_backup["table_sha256"]: raise RuntimeError("删除前数据库快照与备份不一致")
         delete_p10(control,context)
         if p10_residue_count(control)!=0: raise RuntimeError("模拟误删除后P10仍有残留")
-        if file_sha256(backup_path)!=manifest["backup_sha256"]: raise RuntimeError("备份文件SHA-256不匹配")
-        restore_snapshot(control,backup)
+        # 删除后再次从磁盘读取并验证，避免使用删除前保留的内存副本恢复。
+        disk_backup=load_backup_file(backup_path,manifest)
+        restore_snapshot(control,disk_backup)
         restored_connection=connect(config,autocommit=False)
         try: restored=export_consistent_snapshot(restored_connection,context)
         finally: restored_connection.close()
         validate_snapshot(restored)
-        cleanup_after_verified_restore(control,context,restored,backup)
+        cleanup_after_verified_restore(control,context,restored,disk_backup)
         if p10_residue_count(control)!=0: raise RuntimeError("验证后清理仍有P10残留")
         baseline_after=verify_protected_baseline(control)
         summary={"status":"PASS","checks":{"ddl_structure_before":pre_columns,"ddl_structure_after":post_columns,"ddl_activity":ddl_metrics,"baseline_before":baseline_before,"baseline_after":baseline_after,"backup_transaction":backup["transaction"],"backup_snapshot_started_at":backup["snapshot_started_at"],"backup_counts":backup["counts"],"backup_table_sha256":backup["table_sha256"],"backup_sha256":manifest["backup_sha256"],"backup_size_bytes":manifest["size_bytes"],"delete_residue":0,"restore_hash_equal":True,"final_p10_residue":0},"artifacts":{"backup":str(backup_path),"manifest":str(manifest_path)}}
