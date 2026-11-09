@@ -19,6 +19,7 @@ from src.services.integrity_service import EXPECTED_P4, p4_counts, p5_object_cou
 
 REPEATS = 5
 WARMUPS = 1
+P8_CARD_PREFIX = "P8-PERF-"
 EXPECTED_P7 = {
     "app_user": 100000, "owner": 100000, "mobile_number": 100000,
     "purchase_order": 100000, "order_item": 100000,
@@ -59,6 +60,11 @@ def median_ms(samples: list[float]) -> float:
     if len(samples) != REPEATS or any(value < 0 for value in samples):
         raise ValueError("计时样本不完整")
     return round(statistics.median(samples), 3)
+
+
+def temporary_card_no(repeat: int, sequence: int) -> str:
+    """生成只用于回滚写入测试的卡号。"""
+    return f"{P8_CARD_PREFIX}{repeat:02d}-{sequence:04d}"
 
 
 def index_metadata(connection) -> dict[str, tuple[str, tuple[str, ...]]]:
@@ -146,7 +152,7 @@ def write_benchmark(connection):
         raise RuntimeError("找不到P7订单明细，无法执行写入代价测试")
     samples = []
     for repeat in range(REPEATS):
-        rows = [(parent["item_id"], f"P8-PERF-{repeat:02d}-{seq:04d}", "p8$temporary$hash", parent["denomination"], "UNUSED", "2026-09-01 00:00:00", None) for seq in range(200)]
+        rows = [(parent["item_id"], temporary_card_no(repeat, seq), "p8$temporary$hash", parent["denomination"], "UNUSED", "2026-09-01 00:00:00", None) for seq in range(200)]
         connection.begin()
         try:
             started = time.perf_counter()
@@ -157,7 +163,11 @@ def write_benchmark(connection):
             samples.append((time.perf_counter() - started) * 1000)
         finally:
             connection.rollback()
-    residue = int(scalar(connection, "SELECT COUNT(*) value FROM recharge_card WHERE LEFT(card_no,8)=%s", ("P8-PERF",)))
+    residue = int(scalar(
+        connection,
+        "SELECT COUNT(*) value FROM recharge_card WHERE LEFT(card_no,%s)=%s",
+        (len(P8_CARD_PREFIX), P8_CARD_PREFIX),
+    ))
     if residue != 0:
         raise RuntimeError(f"写入测试回滚后仍有P8残留：{residue}")
     return {"rows_per_repeat": 200, "samples_ms": [round(v, 3) for v in samples], "median_ms": median_ms(samples)}

@@ -3,7 +3,10 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from src.phase8_index_performance import INDEXES, QUERIES, REPEATS, export_csv, median_ms, validate_index_state
+from src.phase8_index_performance import (
+    INDEXES, P8_CARD_PREFIX, QUERIES, REPEATS, export_csv, median_ms,
+    temporary_card_no, validate_index_state,
+)
 
 
 class Phase8UnitTests(unittest.TestCase):
@@ -39,6 +42,15 @@ class Phase8UnitTests(unittest.TestCase):
         self.assertNotIn("DROP TABLE", source)
         self.assertNotIn("TRUNCATE", source)
         self.assertNotIn("DELETE FROM", source)
+
+    def test_temporary_card_prefix_and_residue_predicate_match(self):
+        card_no = temporary_card_no(3, 17)
+        self.assertEqual(P8_CARD_PREFIX, "P8-PERF-")
+        self.assertEqual(card_no, "P8-PERF-03-0017")
+        self.assertEqual(card_no[:len(P8_CARD_PREFIX)], P8_CARD_PREFIX)
+        source = Path(__file__).parents[1].joinpath("src/phase8_index_performance.py").read_text(encoding="utf-8")
+        self.assertIn("LEFT(card_no,%s)=%s", source)
+        self.assertIn("(len(P8_CARD_PREFIX), P8_CARD_PREFIX)", source)
 
     def test_csv_reports_equal_results(self):
         before = {name: {"median_ms": 10.0, "result": {"row_count": "1"}} for name in QUERIES}
