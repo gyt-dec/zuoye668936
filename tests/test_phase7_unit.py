@@ -33,6 +33,7 @@ from src.phase7_large_data import (
     validate_prefix_stats,
     cleanup_item_is_expected,
     cleanup_record_is_expected,
+    execute_pilot_phase,
 )
 
 
@@ -56,6 +57,7 @@ class BatchConnection:
     def commit(self): self.events.append("commit")
     def rollback(self): self.events.append("rollback")
     def cursor(self): return BatchCursor(self.fail)
+    def close(self): self.events.append("close")
 
 
 class GenerationTests(unittest.TestCase):
@@ -233,6 +235,28 @@ class StaticSafetyTests(unittest.TestCase):
         with patch.object(phase7, "marker_counts", return_value={}), patch.object(phase7, "reference_anomalies", return_value={}), patch.object(phase7, "cleanup_inbound_anomalies", return_value={}), patch("builtins.input", return_value="STOP") as prompt:
             with self.assertRaises(RuntimeError): phase7.cleanup(object())
             prompt.assert_called_once()
+
+    def test_pilot_only_run_never_calls_full_generation(self):
+        connection = BatchConnection()
+        snapshot = {"data_capacity": 10, "data_used": 1, "log_capacity": 10, "log_used": 1, "data_filesystem_free": 10, "log_filesystem_free": 10}
+        with patch.object(phase7, "load_database_config", return_value=object()), patch.object(phase7, "connect", return_value=connection), patch.object(phase7, "protect_baseline"), patch.object(phase7, "validate_index_baseline"), patch.object(phase7, "resource_snapshot", return_value=snapshot), patch.object(phase7, "validate_prefixes"), patch.object(phase7, "execute_pilot_phase"), patch.object(phase7, "insert_to_target") as insert:
+            self.assertEqual(phase7.run(False, True), 0)
+            insert.assert_not_called()
+
+    def test_completed_pilot_is_read_only(self):
+        counts = {"app_user":1000,"owner":1000,"mobile_number":1000,"purchase_order":1000,"order_item":1000,"recharge_card":2000,"recharge_record":1000}
+        snapshot = {"data_capacity": 10, "data_used": 1, "log_capacity": 10, "log_used": 1, "data_filesystem_free": 10, "log_filesystem_free": 10}
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "estimate.json"; path.write_text("{}")
+            with patch.dict(os.environ, {"P7_ESTIMATE_FILE": str(path)}), patch.object(phase7, "marker_counts", side_effect=[counts, counts]), patch.object(phase7, "validate_dataset"), patch.object(phase7, "validate_saved_estimate"), patch.object(phase7, "insert_to_target") as insert:
+                self.assertEqual(execute_pilot_phase(object(), snapshot), counts)
+                insert.assert_not_called()
+
+    def test_pilot_and_cleanup_arguments_are_mutually_exclusive(self):
+        project_root = Path(__file__).parents[1]
+        import subprocess, sys
+        result = subprocess.run([sys.executable, str(project_root / "src/phase7_large_data.py"), "--pilot-only", "--cleanup"], cwd=project_root, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 2)
 
 
 if __name__ == "__main__":

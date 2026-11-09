@@ -482,7 +482,29 @@ def protect_baseline(connection) -> None:
         raise RuntimeError("P4/P5/P6保护基线不符合预期")
 
 
-def run(cleanup_mode: bool) -> int:
+def execute_pilot_phase(connection, resource_before: dict[str, int]) -> dict[str, int]:
+    existing = marker_counts(connection)
+    estimate_path = Path(os.environ.get("P7_ESTIMATE_FILE", ""))
+    action = pilot_resume_action(existing, estimate_path.is_file())
+    if action == "reuse_pilot":
+        print("PILOT_COMPLETE|复用已完成的1000组预实验")
+        validate_dataset(connection, PILOT_ORDERS)
+        validate_saved_estimate(resource_before, PILOT_ORDERS)
+    elif action == "complete_pilot":
+        print("阶段7开始1000组小规模预实验/恢复检查")
+        insert_to_target(connection, PILOT_ORDERS)
+        validate_dataset(connection, PILOT_ORDERS)
+        pilot_after = resource_snapshot(connection)
+        estimate_full_space(resource_before, pilot_after)
+    else:
+        print(f"PILOT_SKIPPED|检测到已超过1000组的合法恢复前缀|{existing}")
+        validate_saved_estimate(resource_before, committed_group_prefix(existing))
+    return marker_counts(connection)
+
+
+def run(cleanup_mode: bool, pilot_only: bool = False) -> int:
+    if cleanup_mode and pilot_only:
+        raise ValueError("--pilot-only与--cleanup互斥")
     config = load_database_config()
     connection = connect(config, autocommit=False)
     started = time.perf_counter()
@@ -496,22 +518,11 @@ def run(cleanup_mode: bool) -> int:
         validate_index_baseline(connection)
         resource_before = resource_snapshot(connection)
         validate_prefixes(connection, FULL_ORDERS)
-        existing = marker_counts(connection)
-        estimate_path = Path(os.environ.get("P7_ESTIMATE_FILE", ""))
-        action = pilot_resume_action(existing, estimate_path.is_file())
-        if action == "reuse_pilot":
-            print("PILOT_COMPLETE|复用已完成的1000组预实验")
-            validate_dataset(connection, PILOT_ORDERS)
-            validate_saved_estimate(resource_before, PILOT_ORDERS)
-        elif action == "complete_pilot":
-            print("阶段7开始1000组小规模预实验/恢复检查")
-            insert_to_target(connection, PILOT_ORDERS)
-            validate_dataset(connection, PILOT_ORDERS)
-            pilot_after = resource_snapshot(connection)
-            estimate_full_space(resource_before, pilot_after)
-        else:
-            print(f"PILOT_SKIPPED|检测到已超过1000组的合法恢复前缀|{existing}")
-            validate_saved_estimate(resource_before, committed_group_prefix(existing))
+        execute_pilot_phase(connection, resource_before)
+        if pilot_only:
+            protect_baseline(connection)
+            print("PILOT_ONLY_PASS")
+            return 0
         print("阶段7开始续跑至10万组关联数据")
         insert_to_target(connection, FULL_ORDERS)
         validate_dataset(connection, FULL_ORDERS)
@@ -528,10 +539,12 @@ def run(cleanup_mode: bool) -> int:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="阶段7大规模数据自动实验")
-    parser.add_argument("--cleanup", action="store_true")
+    modes = parser.add_mutually_exclusive_group()
+    modes.add_argument("--cleanup", action="store_true")
+    modes.add_argument("--pilot-only", action="store_true")
     args = parser.parse_args()
     try:
-        return run(args.cleanup)
+        return run(args.cleanup, args.pilot_only)
     except Exception as exc:
         print(f"最终状态：FAIL｜{exc.__class__.__name__}｜{exc}")
         return 1

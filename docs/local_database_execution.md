@@ -248,3 +248,11 @@ bash scripts/run_phase6_python_business.sh
 ```
 
 该入口使用项目专用虚拟环境和权限600的临时密码文件。最终日志为`phase6_python_business_20261108_165812.txt`，P6残留为0，P4基准和P5对象未改变，阶段6状态为完成。
+
+## 14. 阶段7仅预实验入口（待审核后执行）
+
+```bash
+bash scripts/run_phase7_large_data.sh --pilot-only
+```
+
+该命令只建立或只读复核1000组P7预实验数据，完成校验和空间估算后打印`PILOT_ONLY_PASS`并退出，不会继续生成剩余99000组。`--pilot-only`不能与`--cleanup`同时使用。阶段7当前尚未本地执行，不能标记PASS。

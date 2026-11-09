@@ -10,6 +10,14 @@
 bash scripts/run_phase7_large_data.sh
 ```
 
+正式运行前可独立执行仅预实验模式：
+
+```bash
+bash scripts/run_phase7_large_data.sh --pilot-only
+```
+
+该模式最多生成前1000组数据，完成完整性校验和空间估算并保存估算文件，打印`PILOT_ONLY_PASS`后以0退出，绝不进入剩余99000组。若预实验已完成，只做只读校验和估算文件检查。`--pilot-only`与`--cleanup`互斥。
+
 入口及Python生成程序已经实现并完成云端代码级检查，尚未连接或修改本地OceanBase，当前状态为“待ChatGPT审核、待本地执行”。
 
 ## 2. 数据规模

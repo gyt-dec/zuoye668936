@@ -21,9 +21,9 @@ cleanup_secret() {
 trap cleanup_secret EXIT
 trap 'exit 130' INT TERM
 
-[[ $# -le 1 ]] || { echo "仅支持无参数或--cleanup" >&2; exit 2; }
+[[ $# -le 1 ]] || { echo "仅支持无参数、--pilot-only或--cleanup" >&2; exit 2; }
 MODE="${1:-}"
-[[ -z "${MODE}" || "${MODE}" == "--cleanup" ]] || { echo "未知参数：${MODE}" >&2; exit 2; }
+[[ -z "${MODE}" || "${MODE}" == "--pilot-only" || "${MODE}" == "--cleanup" ]] || { echo "未知参数：${MODE}" >&2; exit 2; }
 [[ -x "${PYTHON_BIN}" ]] || { echo "缺少阶段6虚拟环境，请先确认阶段6环境" >&2; exit 1; }
 "${PYTHON_BIN}" -c "import importlib.metadata as m; assert m.version('PyMySQL') == '1.1.1'" || { echo "PyMySQL依赖不符合要求" >&2; exit 1; }
 
@@ -34,6 +34,8 @@ PYTHONPATH="${ROOT_DIR}" "${PYTHON_BIN}" -m unittest discover -s "${ROOT_DIR}/te
 
 if [[ "${MODE}" == "--cleanup" ]]; then
     echo "清理模式连接后会先只读预览并校验P7范围，再要求确认；此时尚不会删除数据。"
+elif [[ "${MODE}" == "--pilot-only" ]]; then
+    echo "仅预实验模式最多生成1000组数据，校验并保存空间估算后立即退出。"
 fi
 
 read -r -s -p "请输入root@coursework数据库密码：" database_password
