@@ -8,6 +8,7 @@ import json
 import math
 import os
 import shutil
+import subprocess
 import time
 from datetime import datetime, timedelta
 from decimal import Decimal
@@ -322,15 +323,69 @@ def validate_prefixes(connection, order_target: int) -> None:
     require_no_anomalies("P7恢复检查发现父子或业务关系异常", recovery_business_anomalies(connection))
 
 
-def resource_snapshot(connection, *, enforce_data: bool = True) -> dict[str, int]:
+def parse_obd_storage_paths(config_text: str) -> tuple[Path, Path]:
+    values: dict[str, set[str]] = {"data_dir": set(), "redo_dir": set()}
+    for raw_line in config_text.splitlines():
+        line = raw_line.strip()
+        for key in values:
+            if line.startswith(f"{key}:"):
+                value = line.split(":", 1)[1].split(" #", 1)[0].strip().strip("'\"")
+                if value:
+                    values[key].add(value)
+    if any(len(items) != 1 for items in values.values()):
+        raise RuntimeError(f"OBD配置未提供唯一data_dir/redo_dir：{values}")
+    paths = []
+    for key in ("data_dir", "redo_dir"):
+        path = Path(next(iter(values[key]))).expanduser()
+        if not path.is_absolute() or not path.is_dir():
+            raise RuntimeError(f"OBD配置中的{key}不是实际存在的绝对目录：{path}")
+        paths.append(path.resolve())
+    return paths[0], paths[1]
+
+
+def local_obd_resource_snapshot() -> dict[str, object]:
+    cluster = os.environ.get("OBD_CLUSTER_NAME", "demo")
+    try:
+        result = subprocess.run(
+            ["obd", "cluster", "dump-config", cluster],
+            capture_output=True, text=True, check=False, timeout=30,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise RuntimeError(f"执行OBD配置读取失败：{exc.__class__.__name__}: {exc}") from exc
+    combined = "\n".join(part for part in (result.stdout, result.stderr) if part)
+    if result.returncode != 0:
+        raise RuntimeError(f"obd cluster dump-config {cluster}退出码{result.returncode}：{combined.strip()}")
+    data_path, log_path = parse_obd_storage_paths(combined)
+    data_usage, log_usage = shutil.disk_usage(data_path), shutil.disk_usage(log_path)
+    return {
+        "source": "obd_local_config", "data_path": str(data_path),
+        "log_path": str(log_path), "data_capacity": int(data_usage.total),
+        "data_used": int(data_usage.used), "log_capacity": int(log_usage.total),
+        "log_used": int(log_usage.used), "data_filesystem_free": int(data_usage.free),
+        "log_filesystem_free": int(log_usage.free),
+    }
+
+
+def resource_snapshot(connection, *, enforce_data: bool = True) -> dict[str, object]:
+    database_error: Exception | None = None
     try:
         with connection.cursor() as cursor:
             cursor.execute("SELECT * FROM oceanbase.GV$OB_SERVERS")
             row = cursor.fetchone()
     except Exception as exc:
-        raise RuntimeError("无法读取OceanBase数据盘/日志盘实际资源；停止插入，请保留原始错误") from exc
+        database_error = exc
+        row = None
     if not row:
-        raise RuntimeError("GV$OB_SERVERS未返回资源数据")
+        try:
+            result = local_obd_resource_snapshot()
+        except Exception as obd_error:
+            db_detail = (f"{database_error.__class__.__name__}: {database_error}"
+                         if database_error else "GV$OB_SERVERS未返回资源数据")
+            raise RuntimeError(
+                f"资源检查失败；数据库底层错误=[{db_detail}]；"
+                f"OBD底层错误=[{obd_error.__class__.__name__}: {obd_error}]"
+            ) from obd_error
+        return validate_resource_limits(result, enforce_data=enforce_data)
     def pick(*names):
         for name in names:
             if name in row and row[name] is not None:
@@ -342,7 +397,8 @@ def resource_snapshot(connection, *, enforce_data: bool = True) -> dict[str, int
             raise RuntimeError(f"无法确认OceanBase实际存储挂载点：{name}={value}")
         return str(value)
     data_path, log_path = pick_path("DATA_DISK_PATH"), pick_path("LOG_DISK_PATH")
-    result = {
+    result: dict[str, object] = {
+        "source": "GV$OB_SERVERS",
         "data_capacity": pick("DATA_DISK_CAPACITY"),
         "data_used": pick("DATA_DISK_IN_USE"),
         "log_capacity": pick("LOG_DISK_CAPACITY"),
@@ -350,9 +406,13 @@ def resource_snapshot(connection, *, enforce_data: bool = True) -> dict[str, int
         "data_filesystem_free": int(shutil.disk_usage(data_path).free),
         "log_filesystem_free": int(shutil.disk_usage(log_path).free),
     }
-    if result["log_capacity"] - result["log_used"] < LOG_RESERVE:
+    return validate_resource_limits(result, enforce_data=enforce_data)
+
+
+def validate_resource_limits(result: dict[str, object], *, enforce_data: bool = True) -> dict[str, object]:
+    if int(result["log_capacity"]) - int(result["log_used"]) < LOG_RESERVE:
         raise RuntimeError(f"OceanBase日志盘安全余量不足：{result}")
-    if enforce_data and (result["data_capacity"] - result["data_used"] < DATA_RESERVE or result["data_filesystem_free"] < DATA_RESERVE):
+    if enforce_data and (int(result["data_capacity"]) - int(result["data_used"]) < DATA_RESERVE or int(result["data_filesystem_free"]) < DATA_RESERVE):
         raise RuntimeError(f"OceanBase数据盘或日志盘余量不足：{result}")
     print(f"RESOURCE|{result}")
     return result

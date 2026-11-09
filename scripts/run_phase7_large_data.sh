@@ -54,6 +54,7 @@ export OB_DATABASE="${OB_DATABASE:-phone_recharge_db}"
 export PYTHONPATH="${ROOT_DIR}"
 export PYTHONUNBUFFERED=1
 export P7_ESTIMATE_FILE="${RESULT_DIR}/phase7_space_estimate.json"
+export OBD_CLUSTER_NAME="${OBD_CLUSTER_NAME:-demo}"
 
 echo "阶段7自动化开始：$(date '+%F %T %z')"
 echo "日志：${LOG_FILE}"

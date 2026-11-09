@@ -5,6 +5,8 @@ from __future__ import annotations
 import unittest
 import json
 import os
+import shutil
+import subprocess
 import tempfile
 from datetime import datetime
 from decimal import Decimal
@@ -34,6 +36,9 @@ from src.phase7_large_data import (
     cleanup_item_is_expected,
     cleanup_record_is_expected,
     execute_pilot_phase,
+    local_obd_resource_snapshot,
+    parse_obd_storage_paths,
+    resource_snapshot,
 )
 
 
@@ -58,6 +63,16 @@ class BatchConnection:
     def rollback(self): self.events.append("rollback")
     def cursor(self): return BatchCursor(self.fail)
     def close(self): self.events.append("close")
+
+
+class FailingResourceCursor:
+    def __enter__(self): return self
+    def __exit__(self, *args): return False
+    def execute(self, sql): raise RuntimeError("ERROR 1146 table does not exist")
+
+
+class FailingResourceConnection:
+    def cursor(self): return FailingResourceCursor()
 
 
 class GenerationTests(unittest.TestCase):
@@ -240,6 +255,27 @@ class StaticSafetyTests(unittest.TestCase):
         self.assertIn('pick_path("DATA_DISK_PATH")', self.python_source)
         self.assertIn('pick_path("LOG_DISK_PATH")', self.python_source)
         self.assertNotIn('disk_usage("/")', self.python_source)
+
+    def test_obd_config_paths_and_disk_usage_fallback(self):
+        with tempfile.TemporaryDirectory() as directory:
+            data_dir, redo_dir = Path(directory)/"data", Path(directory)/"redo"
+            data_dir.mkdir(); redo_dir.mkdir()
+            config = f"data_dir: {data_dir}\nredo_dir: {redo_dir}\n"
+            self.assertEqual(parse_obd_storage_paths(config), (data_dir.resolve(), redo_dir.resolve()))
+            completed = subprocess.CompletedProcess([], 0, stdout=config, stderr="")
+            usage = shutil.disk_usage(directory)
+            with patch("src.phase7_large_data.subprocess.run", return_value=completed), patch("src.phase7_large_data.shutil.disk_usage", return_value=usage):
+                snapshot = local_obd_resource_snapshot()
+                self.assertEqual(snapshot["data_path"], str(data_dir.resolve()))
+                self.assertEqual(snapshot["log_path"], str(redo_dir.resolve()))
+
+    def test_resource_failure_reports_database_and_obd_errors(self):
+        with patch("src.phase7_large_data.local_obd_resource_snapshot", side_effect=RuntimeError("OBD config missing")):
+            with self.assertRaises(RuntimeError) as context:
+                resource_snapshot(FailingResourceConnection())
+        message = str(context.exception)
+        self.assertIn("ERROR 1146", message)
+        self.assertIn("OBD config missing", message)
 
     def test_single_wrong_item_is_rejected_and_normal_item_passes(self):
         self.assertFalse(cleanup_item_is_expected(1, Decimal("20.00"), 2, 1))
