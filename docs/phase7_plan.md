@@ -69,7 +69,7 @@ Python使用PyMySQL参数化`executemany()`，默认每批500行。每一批是�
 - 每批提交后释放参数列表，并周期性输出进度；
 - 单线程写入，避免批量生成阶段与后续并发实验混在一起；
 - 运行前记录当前业务库表大小和WSL文件系统剩余空间；空间不足时停止，不自动扩容或修改OceanBase资源参数；
-- 优先通过`GV$OB_SERVERS`读取资源；普通租户无法访问该视图时，不依赖sys密码，而是执行本机`obd cluster dump-config demo`，从真实OBD配置提取唯一的`data_dir`和`redo_dir`并用`shutil.disk_usage`检查对应挂载点。OBD命令、字段或实际目录不可确认时停止，并同时输出数据库和OBD底层错误；
+- 优先通过`GV$OB_SERVERS`读取资源；普通租户无法访问该视图时，不依赖sys密码，直接读取`~/.obd/cluster/demo/config.yaml`中的唯一`home_path`，验证`home_path/store`和`home_path/store/clog`存在后用`shutil.disk_usage`检查实际挂载点。两目录位于同一文件系统时联合预留3 GiB，不把free重复计算；配置、字段或目录不可确认时停止并输出底层错误；
 - 不修改`memory_limit`、租户内存、日志盘或隐藏参数；
 - 分批提交控制单事务日志量，降低4 GiB租户日志盘被长事务占满的风险。
 - 1000组预实验前后分别记录OceanBase数据/日志盘和实际数据存储挂载点空间；按实际数据增长的1.5倍保守外推剩余数据需求，数据盘及文件系统均预留2 GiB，日志盘不做线性外推但始终保留1 GiB；每20个批次重新检查资源。存储路径取自`GV$OB_SERVERS`的实际路径字段，路径不可访问时停止，不以根文件系统代替。

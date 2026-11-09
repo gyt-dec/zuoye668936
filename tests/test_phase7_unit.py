@@ -5,8 +5,6 @@ from __future__ import annotations
 import unittest
 import json
 import os
-import shutil
-import subprocess
 import tempfile
 from datetime import datetime
 from decimal import Decimal
@@ -39,6 +37,7 @@ from src.phase7_large_data import (
     local_obd_resource_snapshot,
     parse_obd_storage_paths,
     resource_snapshot,
+    validate_resource_limits,
 )
 
 
@@ -258,16 +257,23 @@ class StaticSafetyTests(unittest.TestCase):
 
     def test_obd_config_paths_and_disk_usage_fallback(self):
         with tempfile.TemporaryDirectory() as directory:
-            data_dir, redo_dir = Path(directory)/"data", Path(directory)/"redo"
-            data_dir.mkdir(); redo_dir.mkdir()
-            config = f"data_dir: {data_dir}\nredo_dir: {redo_dir}\n"
+            home = Path(directory)/"oceanbase-ce"
+            data_dir, redo_dir = home/"store", home/"store"/"clog"
+            redo_dir.mkdir(parents=True)
+            config = f"home_path: {home}\n"
+            config_file = Path(directory)/"config.yaml"; config_file.write_text(config)
             self.assertEqual(parse_obd_storage_paths(config), (data_dir.resolve(), redo_dir.resolve()))
-            completed = subprocess.CompletedProcess([], 0, stdout=config, stderr="")
-            usage = shutil.disk_usage(directory)
-            with patch("src.phase7_large_data.subprocess.run", return_value=completed), patch("src.phase7_large_data.shutil.disk_usage", return_value=usage):
+            with patch.dict(os.environ, {"OBD_CONFIG_FILE": str(config_file)}):
                 snapshot = local_obd_resource_snapshot()
                 self.assertEqual(snapshot["data_path"], str(data_dir.resolve()))
                 self.assertEqual(snapshot["log_path"], str(redo_dir.resolve()))
+                self.assertTrue(snapshot["same_filesystem"])
+
+    def test_shared_filesystem_reserves_data_and_log_space_once(self):
+        gib = 1024**3
+        snapshot = {"data_capacity":10*gib,"data_used":gib,"log_capacity":10*gib,"log_used":gib,"data_filesystem_free":int(2.5*gib),"log_filesystem_free":int(2.5*gib),"same_filesystem":True}
+        with self.assertRaises(RuntimeError):
+            validate_resource_limits(snapshot)
 
     def test_resource_failure_reports_database_and_obd_errors(self):
         with patch("src.phase7_large_data.local_obd_resource_snapshot", side_effect=RuntimeError("OBD config missing")):

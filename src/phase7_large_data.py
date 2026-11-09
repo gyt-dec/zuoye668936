@@ -8,7 +8,6 @@ import json
 import math
 import os
 import shutil
-import subprocess
 import time
 from datetime import datetime, timedelta
 from decimal import Decimal
@@ -324,45 +323,42 @@ def validate_prefixes(connection, order_target: int) -> None:
 
 
 def parse_obd_storage_paths(config_text: str) -> tuple[Path, Path]:
-    values: dict[str, set[str]] = {"data_dir": set(), "redo_dir": set()}
+    home_paths: set[str] = set()
     for raw_line in config_text.splitlines():
         line = raw_line.strip()
-        for key in values:
-            if line.startswith(f"{key}:"):
-                value = line.split(":", 1)[1].split(" #", 1)[0].strip().strip("'\"")
-                if value:
-                    values[key].add(value)
-    if any(len(items) != 1 for items in values.values()):
-        raise RuntimeError(f"OBD配置未提供唯一data_dir/redo_dir：{values}")
-    paths = []
-    for key in ("data_dir", "redo_dir"):
-        path = Path(next(iter(values[key]))).expanduser()
-        if not path.is_absolute() or not path.is_dir():
-            raise RuntimeError(f"OBD配置中的{key}不是实际存在的绝对目录：{path}")
-        paths.append(path.resolve())
-    return paths[0], paths[1]
+        if line.startswith("home_path:"):
+            value = line.split(":", 1)[1].split(" #", 1)[0].strip().strip("'\"")
+            if value:
+                home_paths.add(value)
+    if len(home_paths) != 1:
+        raise RuntimeError(f"OBD配置未提供唯一home_path：{home_paths}")
+    home_path = Path(next(iter(home_paths))).expanduser()
+    if not home_path.is_absolute() or not home_path.is_dir():
+        raise RuntimeError(f"OBD配置中的home_path不是实际存在的绝对目录：{home_path}")
+    data_path, log_path = home_path / "store", home_path / "store" / "clog"
+    if not data_path.is_dir() or not log_path.is_dir():
+        raise RuntimeError(f"OceanBase实际store/clog目录不存在：data={data_path},log={log_path}")
+    return data_path.resolve(), log_path.resolve()
 
 
 def local_obd_resource_snapshot() -> dict[str, object]:
     cluster = os.environ.get("OBD_CLUSTER_NAME", "demo")
+    config_path = Path(os.environ.get(
+        "OBD_CONFIG_FILE", str(Path.home() / ".obd" / "cluster" / cluster / "config.yaml")
+    )).expanduser()
     try:
-        result = subprocess.run(
-            ["obd", "cluster", "dump-config", cluster],
-            capture_output=True, text=True, check=False, timeout=30,
-        )
-    except (OSError, subprocess.SubprocessError) as exc:
-        raise RuntimeError(f"执行OBD配置读取失败：{exc.__class__.__name__}: {exc}") from exc
-    combined = "\n".join(part for part in (result.stdout, result.stderr) if part)
-    if result.returncode != 0:
-        raise RuntimeError(f"obd cluster dump-config {cluster}退出码{result.returncode}：{combined.strip()}")
-    data_path, log_path = parse_obd_storage_paths(combined)
+        config_text = config_path.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise RuntimeError(f"读取OBD配置失败：path={config_path}；{exc.__class__.__name__}: {exc}") from exc
+    data_path, log_path = parse_obd_storage_paths(config_text)
     data_usage, log_usage = shutil.disk_usage(data_path), shutil.disk_usage(log_path)
+    same_filesystem = data_path.stat().st_dev == log_path.stat().st_dev
     return {
-        "source": "obd_local_config", "data_path": str(data_path),
+        "source": f"obd_config:{config_path}", "data_path": str(data_path),
         "log_path": str(log_path), "data_capacity": int(data_usage.total),
         "data_used": int(data_usage.used), "log_capacity": int(log_usage.total),
         "log_used": int(log_usage.used), "data_filesystem_free": int(data_usage.free),
-        "log_filesystem_free": int(log_usage.free),
+        "log_filesystem_free": int(log_usage.free), "same_filesystem": same_filesystem,
     }
 
 
@@ -405,6 +401,7 @@ def resource_snapshot(connection, *, enforce_data: bool = True) -> dict[str, obj
         "log_used": pick("LOG_DISK_IN_USE"),
         "data_filesystem_free": int(shutil.disk_usage(data_path).free),
         "log_filesystem_free": int(shutil.disk_usage(log_path).free),
+        "same_filesystem": Path(data_path).stat().st_dev == Path(log_path).stat().st_dev,
     }
     return validate_resource_limits(result, enforce_data=enforce_data)
 
@@ -412,7 +409,8 @@ def resource_snapshot(connection, *, enforce_data: bool = True) -> dict[str, obj
 def validate_resource_limits(result: dict[str, object], *, enforce_data: bool = True) -> dict[str, object]:
     if int(result["log_capacity"]) - int(result["log_used"]) < LOG_RESERVE:
         raise RuntimeError(f"OceanBase日志盘安全余量不足：{result}")
-    if enforce_data and (int(result["data_capacity"]) - int(result["data_used"]) < DATA_RESERVE or int(result["data_filesystem_free"]) < DATA_RESERVE):
+    filesystem_reserve = DATA_RESERVE + LOG_RESERVE if result.get("same_filesystem") else DATA_RESERVE
+    if enforce_data and (int(result["data_capacity"]) - int(result["data_used"]) < DATA_RESERVE or int(result["data_filesystem_free"]) < filesystem_reserve):
         raise RuntimeError(f"OceanBase数据盘或日志盘余量不足：{result}")
     print(f"RESOURCE|{result}")
     return result
@@ -428,7 +426,8 @@ def estimate_full_space(before: dict[str, int], after: dict[str, int]) -> dict[s
     estimated_fs = math.ceil(max(growth, fs_growth) * remaining / PILOT_ORDERS * 1.5)
     data_free = after["data_capacity"] - after["data_used"]
     log_free = after["log_capacity"] - after["log_used"]
-    if data_free - estimated < DATA_RESERVE or after["data_filesystem_free"] - estimated_fs < DATA_RESERVE or log_free < LOG_RESERVE:
+    filesystem_reserve = DATA_RESERVE + LOG_RESERVE if after.get("same_filesystem") else DATA_RESERVE
+    if data_free - estimated < DATA_RESERVE or after["data_filesystem_free"] - estimated_fs < filesystem_reserve or log_free < LOG_RESERVE:
         raise RuntimeError("预实验估算显示完整数据空间不足")
     result = {"pilot_groups": PILOT_ORDERS, "pilot_growth": growth, "pilot_filesystem_growth": fs_growth, "per_group_data": growth/PILOT_ORDERS, "per_group_filesystem": max(growth,fs_growth)/PILOT_ORDERS, "estimated_remaining": estimated, "estimated_remaining_filesystem": estimated_fs, "data_safety": data_free-estimated, "filesystem_safety": after["data_filesystem_free"]-estimated_fs, "log_safety": log_free}
     print(f"SPACE_ESTIMATE|{result}")
@@ -463,7 +462,8 @@ def validate_saved_estimate(snapshot: dict[str, int], committed_groups: int) -> 
     estimated_fs = math.ceil(per_fs * remaining * 1.5)
     data_free = snapshot["data_capacity"] - snapshot["data_used"]
     log_free = snapshot["log_capacity"] - snapshot["log_used"]
-    if data_free-estimated < DATA_RESERVE or snapshot["data_filesystem_free"]-estimated_fs < DATA_RESERVE or log_free < LOG_RESERVE:
+    filesystem_reserve = DATA_RESERVE + LOG_RESERVE if snapshot.get("same_filesystem") else DATA_RESERVE
+    if data_free-estimated < DATA_RESERVE or snapshot["data_filesystem_free"]-estimated_fs < filesystem_reserve or log_free < LOG_RESERVE:
         raise RuntimeError("恢复时预计剩余空间不足")
     print(f"SPACE_ESTIMATE_REUSED|committed={committed_groups}|remaining={remaining}|estimated={estimated}|estimated_fs={estimated_fs}")
 

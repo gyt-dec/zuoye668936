@@ -257,4 +257,4 @@ bash scripts/run_phase7_large_data.sh --pilot-only
 
 该命令只建立或只读复核1000组P7预实验数据，完成校验和空间估算后打印`PILOT_ONLY_PASS`并退出，不会继续生成剩余99000组。`--pilot-only`不能与`--cleanup`同时使用。阶段7当前尚未本地执行，不能标记PASS。
 
-阶段7默认使用OBD集群名`demo`。普通`coursework`租户不能查询`GV$OB_SERVERS`时，脚本会只读执行`obd cluster dump-config demo`，从配置中的`data_dir`和`redo_dir`确认实际目录并检查挂载点空间，不需要`root@sys`密码。如本地集群名不同，可在同一命令前设置`OBD_CLUSTER_NAME`；脚本不会猜测目录。
+阶段7默认使用OBD集群名`demo`。普通`coursework`租户不能查询`GV$OB_SERVERS`时，脚本会只读打开`~/.obd/cluster/demo/config.yaml`，从其中的`home_path`验证实际`store`和`store/clog`目录并检查挂载点空间，不需要`root@sys`密码。如配置文件位置不同，可设置`OBD_CONFIG_FILE`；脚本不会猜测不存在的目录。
