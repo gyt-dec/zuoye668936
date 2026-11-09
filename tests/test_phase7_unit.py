@@ -6,9 +6,12 @@ import unittest
 import json
 import os
 import tempfile
+from datetime import datetime
 from decimal import Decimal
 from pathlib import Path
+from unittest.mock import patch
 
+import src.phase7_large_data as phase7
 from src.phase7_large_data import (
     BATCH_SIZE,
     batch_ranges,
@@ -28,6 +31,8 @@ from src.phase7_large_data import (
     validate_view_counts,
     user_row,
     validate_prefix_stats,
+    cleanup_item_is_expected,
+    cleanup_record_is_expected,
 )
 
 
@@ -204,6 +209,30 @@ class StaticSafetyTests(unittest.TestCase):
         self.assertIn('pick_path("DATA_DISK_PATH")', self.python_source)
         self.assertIn('pick_path("LOG_DISK_PATH")', self.python_source)
         self.assertNotIn('disk_usage("/")', self.python_source)
+
+    def test_single_wrong_item_is_rejected_and_normal_item_passes(self):
+        self.assertFalse(cleanup_item_is_expected(1, Decimal("20.00"), 2, 1))
+        self.assertTrue(cleanup_item_is_expected(1, Decimal("10.00"), 2, 1))
+
+    def test_wrong_mobile_record_is_rejected_and_normal_record_passes(self):
+        expected_time = datetime(2026, 6, 1, 0, 0, 37)
+        self.assertFalse(cleanup_record_is_expected(1, "198700000002", Decimal("10.00"), expected_time, Decimal("10.00"), "USED", expected_time, 1))
+        self.assertTrue(cleanup_record_is_expected(1, "198700000001", Decimal("10.00"), expected_time, Decimal("10.00"), "USED", expected_time, 1))
+
+    def test_cleanup_refuses_item_anomaly_before_confirmation(self):
+        with patch.object(phase7, "marker_counts", return_value={}), patch.object(phase7, "reference_anomalies", return_value={}), patch.object(phase7, "cleanup_inbound_anomalies", return_value={"non_p7_item_to_p7_order": 1}), patch("builtins.input") as prompt:
+            with self.assertRaises(RuntimeError): phase7.cleanup(object())
+            prompt.assert_not_called()
+
+    def test_cleanup_refuses_record_anomaly_before_confirmation(self):
+        with patch.object(phase7, "marker_counts", return_value={}), patch.object(phase7, "reference_anomalies", return_value={}), patch.object(phase7, "cleanup_inbound_anomalies", return_value={"non_p7_record_to_p7_card": 1}), patch("builtins.input") as prompt:
+            with self.assertRaises(RuntimeError): phase7.cleanup(object())
+            prompt.assert_not_called()
+
+    def test_normal_cleanup_relationships_reach_confirmation(self):
+        with patch.object(phase7, "marker_counts", return_value={}), patch.object(phase7, "reference_anomalies", return_value={}), patch.object(phase7, "cleanup_inbound_anomalies", return_value={}), patch("builtins.input", return_value="STOP") as prompt:
+            with self.assertRaises(RuntimeError): phase7.cleanup(object())
+            prompt.assert_called_once()
 
 
 if __name__ == "__main__":

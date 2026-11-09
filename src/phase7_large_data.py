@@ -264,13 +264,31 @@ def recovery_business_anomalies(connection) -> dict[str, int]:
     return anomalies
 
 
+def expected_item_values(order_seq: int) -> tuple[Decimal, int]:
+    return denomination_for_order(order_seq), quantity_for_order(order_seq)
+
+
+def cleanup_item_is_expected(order_seq: int, denomination: Decimal, quantity: int, item_count: int = 1) -> bool:
+    expected_denomination, expected_quantity = expected_item_values(order_seq)
+    return item_count == 1 and Decimal(denomination) == expected_denomination and quantity == expected_quantity
+
+
+def cleanup_record_is_expected(card_seq: int, phone_number: str | None, amount: Decimal | None, recharged_at: datetime | None, face_value: Decimal, card_status: str, used_at: datetime | None, record_count: int) -> bool:
+    if card_seq > FULL_ORDERS:
+        return record_count == 0 and card_status == "UNUSED" and used_at is None
+    expected_time = deterministic_time(card_seq)
+    return (record_count == 1 and phone_number == phone_for_seq(card_seq)
+            and Decimal(amount) == Decimal(face_value) and recharged_at == expected_time
+            and card_status == "USED" and used_at == expected_time)
+
+
 def cleanup_inbound_anomalies(connection) -> dict[str, int]:
     queries = {
         "non_p7_mobile_to_p7_owner": ("SELECT COUNT(*) value FROM mobile_number mn JOIN owner o ON o.owner_id=mn.owner_id WHERE LEFT(o.owner_name,9)=%s AND LEFT(mn.phone_number,4)<>%s", ("P7_OWNER_", "1987")),
         "non_p7_order_to_p7_user": ("SELECT COUNT(*) value FROM purchase_order po JOIN app_user u ON u.user_id=po.user_id WHERE LEFT(u.login_name,8)=%s AND LEFT(po.order_no,9)<>%s", ("p7_user_", "P7-ORDER-")),
-        "non_p7_item_to_p7_order": ("SELECT COUNT(*) value FROM (SELECT po.order_id FROM purchase_order po JOIN order_item oi ON oi.order_id=po.order_id WHERE LEFT(po.order_no,9)=%s GROUP BY po.order_id HAVING COUNT(*)>1) x", ("P7-ORDER-",)),
+        "non_p7_item_to_p7_order": ("SELECT COUNT(*) value FROM (SELECT po.order_id,CAST(SUBSTRING(po.order_no,10) AS UNSIGNED) seq,COUNT(oi.item_id) item_count,SUM(CASE WHEN oi.denomination=CASE MOD(CAST(SUBSTRING(po.order_no,10) AS UNSIGNED)-1,5) WHEN 0 THEN 10.00 WHEN 1 THEN 20.00 WHEN 2 THEN 30.00 WHEN 3 THEN 50.00 ELSE 100.00 END AND oi.quantity=CASE WHEN CAST(SUBSTRING(po.order_no,10) AS UNSIGNED)<=20000 THEN 2 ELSE 1 END THEN 1 ELSE 0 END) expected_count FROM purchase_order po LEFT JOIN order_item oi ON oi.order_id=po.order_id WHERE LEFT(po.order_no,9)=%s GROUP BY po.order_id,seq HAVING item_count<>1 OR expected_count<>1) x", ("P7-ORDER-",)),
         "non_p7_card_to_p7_item": ("SELECT COUNT(*) value FROM recharge_card rc JOIN order_item oi ON oi.item_id=rc.item_id JOIN purchase_order po ON po.order_id=oi.order_id WHERE LEFT(po.order_no,9)=%s AND LEFT(rc.card_no,8)<>%s", ("P7-ORDER-", "P7-CARD-")),
-        "non_p7_record_to_p7_card": ("SELECT COUNT(*) value FROM recharge_record rr JOIN recharge_card rc ON rc.card_id=rr.card_id WHERE LEFT(rc.card_no,8)=%s AND (CAST(SUBSTRING(rc.card_no,9) AS UNSIGNED)>100000 OR rr.recharge_amount<>rc.face_value OR rr.recharged_at<>rc.used_at)", ("P7-CARD-",)),
+        "non_p7_record_to_p7_card": ("SELECT COUNT(*) value FROM (SELECT rc.card_id,CAST(SUBSTRING(rc.card_no,9) AS UNSIGNED) seq,rc.face_value,rc.card_status,rc.used_at,COUNT(rr.recharge_id) record_count,SUM(CASE WHEN CAST(SUBSTRING(mn.phone_number,5) AS UNSIGNED)=CAST(SUBSTRING(rc.card_no,9) AS UNSIGNED) AND rr.recharge_amount=rc.face_value AND rr.recharged_at=TIMESTAMPADD(SECOND,CAST(SUBSTRING(rc.card_no,9) AS UNSIGNED)*37,CAST('2026-06-01 00:00:00.000000' AS DATETIME(6))) AND rc.card_status='USED' AND rc.used_at=rr.recharged_at THEN 1 ELSE 0 END) expected_count FROM recharge_card rc LEFT JOIN recharge_record rr ON rr.card_id=rc.card_id LEFT JOIN mobile_number mn ON mn.mobile_id=rr.mobile_id WHERE LEFT(rc.card_no,8)=%s GROUP BY rc.card_id,seq,rc.face_value,rc.card_status,rc.used_at HAVING (seq<=100000 AND (record_count<>1 OR expected_count<>1)) OR (seq>100000 AND (record_count<>0 OR rc.card_status<>'UNUSED' OR rc.used_at IS NOT NULL))) x", ("P7-CARD-",)),
         "non_p7_record_to_p7_mobile": ("SELECT COUNT(*) value FROM recharge_record rr JOIN mobile_number mn ON mn.mobile_id=rr.mobile_id JOIN owner o ON o.owner_id=mn.owner_id JOIN recharge_card rc ON rc.card_id=rr.card_id WHERE LEFT(o.owner_name,9)=%s AND LEFT(rc.card_no,8)<>%s", ("P7_OWNER_", "P7-CARD-")),
     }
     return {name: int(scalar(connection, sql, params)) for name, (sql, params) in queries.items()}
