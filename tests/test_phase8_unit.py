@@ -5,7 +5,7 @@ from pathlib import Path
 
 from src.phase8_index_performance import (
     INDEXES, P8_CARD_PREFIX, QUERIES, REPEATS, export_csv, median_ms,
-    temporary_card_no, validate_index_state,
+    p5_objects_valid, temporary_card_no, validate_index_state,
 )
 
 
@@ -51,6 +51,11 @@ class Phase8UnitTests(unittest.TestCase):
         source = Path(__file__).parents[1].joinpath("src/phase8_index_performance.py").read_text(encoding="utf-8")
         self.assertIn("LEFT(card_no,%s)=%s", source)
         self.assertIn("(len(P8_CARD_PREFIX), P8_CARD_PREFIX)", source)
+
+    def test_p5_object_count_uses_service_string_format(self):
+        self.assertTrue(p5_objects_valid("2,2"))
+        for invalid in ("2,1", "1,2", "0,0", "", "(2, 2)"):
+            self.assertFalse(p5_objects_valid(invalid))
 
     def test_csv_reports_equal_results(self):
         before = {name: {"median_ms": 10.0, "result": {"row_count": "1"}} for name in QUERIES}

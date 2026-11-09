@@ -67,6 +67,11 @@ def temporary_card_no(repeat: int, sequence: int) -> str:
     return f"{P8_CARD_PREFIX}{repeat:02d}-{sequence:04d}"
 
 
+def p5_objects_valid(value: str) -> bool:
+    """阶段5完整性服务以“视图数,触发器数”字符串返回对象基线。"""
+    return value == "2,2"
+
+
 def index_metadata(connection) -> dict[str, tuple[str, tuple[str, ...]]]:
     sql = """SELECT TABLE_NAME,INDEX_NAME,SEQ_IN_INDEX,COLUMN_NAME
              FROM information_schema.STATISTICS
@@ -191,7 +196,7 @@ def validate_baseline(connection):
     database = scalar(connection, "SELECT DATABASE() value")
     if "OceanBase_CE-v5.0.1.0" not in str(version) or str(mode).upper() != "MYSQL" or database != "phone_recharge_db":
         raise RuntimeError(f"环境不符合阶段8要求：{version},{mode},{database}")
-    if table_count(connection) != 7 or p4_counts(connection) != EXPECTED_P4 or p5_object_counts(connection) != (2, 2) or p6_residue_count(connection) != 0:
+    if table_count(connection) != 7 or p4_counts(connection) != EXPECTED_P4 or not p5_objects_valid(p5_object_counts(connection)) or p6_residue_count(connection) != 0:
         raise RuntimeError("阶段3至6保护基线不符合预期")
     counts = marker_counts(connection)
     if counts != EXPECTED_P7:
