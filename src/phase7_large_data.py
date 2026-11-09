@@ -27,6 +27,12 @@ P7_HASH = "p7$synthetic$pbkdf2-sha256$not-a-real-credential"
 DATA_RESERVE = 2 * 1024**3
 LOG_RESERVE = 1024**3
 BATCH_COUNTER = 0
+ESTIMATE_REQUIRED_FIELDS = {
+    "pilot_groups", "pilot_growth", "pilot_filesystem_growth",
+    "per_group_data", "per_group_filesystem", "estimated_remaining",
+    "estimated_remaining_filesystem", "data_safety", "filesystem_safety",
+    "log_safety",
+}
 
 
 def batch_ranges(start: int, stop: int, size: int = BATCH_SIZE):
@@ -378,8 +384,18 @@ def validate_saved_estimate(snapshot: dict[str, int], committed_groups: int) -> 
         raise RuntimeError("恢复完整插入时缺少1000组空间估算文件，停止续跑")
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(data, dict) or not ESTIMATE_REQUIRED_FIELDS.issubset(data):
+            raise ValueError("必要字段不完整")
+        pilot_groups = data["pilot_groups"]
+        if (isinstance(pilot_groups, bool) or not isinstance(pilot_groups, (int, float))
+                or not math.isfinite(float(pilot_groups)) or float(pilot_groups) != PILOT_ORDERS):
+            raise ValueError("pilot_groups与预实验规模不一致")
         per_data = float(data["per_group_data"])
         per_fs = float(data["per_group_filesystem"])
+        if not math.isfinite(per_data) or per_data <= 0:
+            raise ValueError("per_group_data必须是有限正数")
+        if not math.isfinite(per_fs) or per_fs <= 0:
+            raise ValueError("per_group_filesystem必须是有限正数")
     except (KeyError, ValueError, TypeError, json.JSONDecodeError) as exc:
         raise RuntimeError("空间估算文件缺失必要字段或已损坏") from exc
     remaining = max(0, FULL_ORDERS - committed_groups)

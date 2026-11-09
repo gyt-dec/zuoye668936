@@ -201,6 +201,35 @@ class StaticSafetyTests(unittest.TestCase):
         self.assertEqual(pilot_resume_action(counts, True), "reuse_pilot")
         with self.assertRaises(RuntimeError): pilot_resume_action(counts, False)
 
+    def test_saved_estimate_strict_numeric_validation(self):
+        gib = 1024**3
+        snapshot = {"data_used": gib, "data_filesystem_free": 100*gib, "data_capacity": 100*gib, "log_capacity": 10*gib, "log_used": gib}
+        valid = {
+            "pilot_groups": 1000, "pilot_growth": 1000,
+            "pilot_filesystem_growth": 1000, "per_group_data": 1.0,
+            "per_group_filesystem": 1.0, "estimated_remaining": 99000,
+            "estimated_remaining_filesystem": 99000, "data_safety": 10*gib,
+            "filesystem_safety": 10*gib, "log_safety": 5*gib,
+        }
+        invalid_values = (-1, 0, float("nan"), float("inf"), "not-a-number")
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "estimate.json"
+            with patch.dict(os.environ, {"P7_ESTIMATE_FILE": str(path)}):
+                path.write_text(json.dumps(valid))
+                validate_saved_estimate(snapshot, 100000)
+                for field in ("per_group_data", "per_group_filesystem"):
+                    for value in invalid_values:
+                        broken = dict(valid); broken[field] = value
+                        content = json.dumps(broken)
+                        path.write_text(content)
+                        with self.assertRaises(RuntimeError):
+                            validate_saved_estimate(snapshot, 1000)
+                        self.assertEqual(path.read_text(), content)
+                for broken in ({k:v for k,v in valid.items() if k != "log_safety"}, {**valid, "pilot_groups": 999}):
+                    path.write_text(json.dumps(broken))
+                    with self.assertRaises(RuntimeError):
+                        validate_saved_estimate(snapshot, 1000)
+
     def test_exact_prefix_predicates_and_cleanup_guards(self):
         self.assertNotIn(" LIKE ", self.python_source)
         self.assertIn("LEFT(login_name,8)=%s", self.python_source)
