@@ -260,7 +260,13 @@ class StaticSafetyTests(unittest.TestCase):
             home = Path(directory)/"oceanbase-ce"
             data_dir, redo_dir = home/"store", home/"store"/"clog"
             redo_dir.mkdir(parents=True)
-            config = f"home_path: {home}\n"
+            config = (
+                "grafana:\n  global:\n    home_path: /tmp/grafana\n"
+                f"oceanbase-ce:\n  servers:\n    - 127.0.0.1\n  global:\n    home_path: {home}\n"
+                "obproxy-ce:\n  global:\n    home_path: /tmp/obproxy\n"
+                "obagent:\n  global:\n    home_path: /tmp/obagent\n"
+                "prometheus:\n  global:\n    home_path: /tmp/prometheus\n"
+            )
             config_file = Path(directory)/"config.yaml"; config_file.write_text(config)
             self.assertEqual(parse_obd_storage_paths(config), (data_dir.resolve(), redo_dir.resolve()))
             with patch.dict(os.environ, {"OBD_CONFIG_FILE": str(config_file)}):

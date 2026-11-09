@@ -324,14 +324,29 @@ def validate_prefixes(connection, order_target: int) -> None:
 
 def parse_obd_storage_paths(config_text: str) -> tuple[Path, Path]:
     home_paths: set[str] = set()
+    oceanbase_component_count = 0
+    in_oceanbase_component = False
     for raw_line in config_text.splitlines():
+        if raw_line and not raw_line[0].isspace():
+            header = raw_line.split("#", 1)[0].strip()
+            if header.endswith(":"):
+                component = header[:-1].strip().strip("'\"")
+                in_oceanbase_component = component == "oceanbase-ce"
+                if in_oceanbase_component:
+                    oceanbase_component_count += 1
+                continue
+        if not in_oceanbase_component:
+            continue
         line = raw_line.strip()
         if line.startswith("home_path:"):
             value = line.split(":", 1)[1].split(" #", 1)[0].strip().strip("'\"")
             if value:
                 home_paths.add(value)
-    if len(home_paths) != 1:
-        raise RuntimeError(f"OBD配置未提供唯一home_path：{home_paths}")
+    if oceanbase_component_count != 1 or len(home_paths) != 1:
+        raise RuntimeError(
+            f"OBD配置未提供唯一oceanbase-ce组件及home_path："
+            f"components={oceanbase_component_count},home_paths={home_paths}"
+        )
     home_path = Path(next(iter(home_paths))).expanduser()
     if not home_path.is_absolute() or not home_path.is_dir():
         raise RuntimeError(f"OBD配置中的home_path不是实际存在的绝对目录：{home_path}")
