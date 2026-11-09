@@ -14,6 +14,10 @@ results/phase8/*.csv
 results/phase9/*.txt
 results/phase9/*.json
 results/phase9/*.csv
+results/phase10/*.txt
+results/phase10/*.json
+results/phase10/*.csv
+results/phase10/backup/
 
 # 阶段6项目专用Python虚拟环境
 .venv-phase6/
