@@ -22,11 +22,18 @@ class Acceptor:
         self.promised_number=number; return Promise(self.node_id,self.accepted_number,self.accepted_value)
     def accept(self,number,value):
         if self.failed or (self.promised_number is not None and number<self.promised_number): return False
+        if self.accepted_number == number:
+            # 同一提议编号只能对应一个值；相同值重放是幂等消息。
+            return self.accepted_value == value
         self.promised_number=number; self.accepted_number=number; self.accepted_value=value; return True
 
 class Learner:
-    def __init__(self,quorum): self.quorum=quorum; self.votes={}; self.learned_value=None
+    def __init__(self,quorum): self.quorum=quorum; self.votes={}; self.acceptor_votes={}; self.learned_value=None
     def observe(self,acceptor_id,number,value):
+        vote_key=(number,acceptor_id)
+        if vote_key in self.acceptor_votes and self.acceptor_votes[vote_key]!=value:
+            raise AssertionError("同一Acceptor不能为同一提议编号投不同值")
+        self.acceptor_votes[vote_key]=value
         key=(number,value); self.votes.setdefault(key,set()).add(acceptor_id)
         if len(self.votes[key])>=self.quorum:
             if self.learned_value is not None and self.learned_value!=value: raise AssertionError("Paxos安全性违反：学习了两个值")

@@ -11,7 +11,8 @@ exec > >(tee -a "${LOG_FILE}") 2>&1
 echo "阶段11算法实验开始：$(date '+%F %T %z')"
 echo "本阶段不连接OceanBase。"
 PYTHONPATH="${ROOT_DIR}" "${PYTHON_BIN}" -m unittest \
-  tests.test_bplus_tree tests.test_hash_index tests.test_conflict_serializability tests.test_paxos -v
+  tests.test_bplus_tree tests.test_hash_index tests.test_conflict_serializability \
+  tests.test_paxos tests.test_phase11_runner -v
 export PYTHONPATH="${ROOT_DIR}" P11_RESULT_DIR="${RESULT_DIR}" PYTHONUNBUFFERED=1
 "${PYTHON_BIN}" "${ROOT_DIR}/src/phase11_algorithm_experiments.py"
 echo "阶段11入口最终状态：PASS"
